@@ -24,6 +24,11 @@ inside each campaign.
 The workflow prepends `/opt/afl++/5.02c/bin` to `PATH`. Set the repository variable
 `LODESTAR_FUZZ_AFL_BIN_DIR` if the pinned installation lives elsewhere.
 
+Before each campaign, the workflow runs the pinned `afl-system-config`, matching Roc's runner setup.
+The dedicated runner account therefore needs passwordless `sudo` for that command. It configures
+Linux crash handling and CPU settings required by AFL++; do not attach this workflow to a shared
+host.
+
 The authoritative mutable state defaults to:
 
 ```text
