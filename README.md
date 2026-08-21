@@ -52,7 +52,8 @@ The workflow runs every four hours. Its defaults are:
 
 `workflow_dispatch` can override the duration, Lodestar-Z ref, and comma-separated target or group
 selectors. Scheduled runs fuzz `main` and select every manifest target. Concurrency prevents two
-campaigns from mutating the persistent state at the same time.
+campaigns from mutating the persistent state at the same time. AFL++ CPU affinity is disabled so
+the host scheduler can run the 13 target processes on the 12-core runner.
 
 ## Project contract
 

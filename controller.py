@@ -248,6 +248,7 @@ def initialize_corpus(target: Target, state_root: Path) -> Path:
 def afl_environment(target: Target) -> dict[str, str]:
     env = os.environ.copy()
     env["AFL_INPUT_LEN_MAX"] = str(target.max_input_len)
+    env["AFL_NO_AFFINITY"] = "1"
     env["AFL_NO_CRASH_README"] = "1"
     env["AFL_NO_UI"] = "1"
     return env
