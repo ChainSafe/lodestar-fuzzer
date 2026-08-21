@@ -327,7 +327,7 @@ def minimize_corpus(
             "-o",
             str(minimized),
             "-t",
-            f"{timeout_ms}+",
+            str(timeout_ms),
             "-m",
             str(memory_mb),
             "--",
@@ -372,7 +372,7 @@ def minimize_failure(
         "-o",
         str(output),
         "-t",
-        f"{timeout_ms}+",
+        str(timeout_ms),
         "-m",
         str(memory_mb),
     ]
