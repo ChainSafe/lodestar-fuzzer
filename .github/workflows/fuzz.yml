@@ -1,0 +1,80 @@
+name: Fuzz Lodestar-Z
+
+on:
+  schedule:
+    - cron: "22 0/4 * * *"
+  workflow_dispatch:
+    inputs:
+      duration_seconds:
+        description: Seconds to fuzz each selected target
+        type: number
+        default: 7200
+      lodestar_z_ref:
+        description: Lodestar-Z branch, tag, or commit
+        type: string
+        default: main
+      selectors:
+        description: Comma-separated target or group selectors; empty means all
+        type: string
+        default: ""
+
+run-name: Fuzz Lodestar-Z ${{ inputs.lodestar_z_ref || 'main' }}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: [self-hosted, linux, x64, fuzz]
+    timeout-minutes: 300
+    env:
+      DURATION_SECONDS: ${{ inputs.duration_seconds || vars.LODESTAR_FUZZ_DURATION_SECONDS || '7200' }}
+      FUZZ_JOBS: ${{ vars.LODESTAR_FUZZ_JOBS || '13' }}
+      MEMORY_MB: ${{ vars.LODESTAR_FUZZ_MEMORY_MB || '2048' }}
+      SELECTORS: ${{ inputs.selectors || '' }}
+      STATE_ROOT: ${{ vars.LODESTAR_FUZZ_STATE_ROOT || '' }}
+      TIMEOUT_MS: ${{ vars.LODESTAR_FUZZ_TIMEOUT_MS || '1000' }}
+    steps:
+      - name: Checkout controller
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          path: lodestar-fuzzer
+
+      - name: Checkout Lodestar-Z
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          path: lodestar-z
+          repository: ChainSafe/lodestar-z
+          ref: ${{ inputs.lodestar_z_ref || 'main' }}
+
+      - name: Run finite campaigns
+        run: |
+          python3 lodestar-fuzzer/controller.py \
+            --project-root lodestar-z \
+            --state-root "$STATE_ROOT" \
+            --report-dir "$RUNNER_TEMP/lodestar-fuzzer-reports" \
+            --duration-seconds "$DURATION_SECONDS" \
+            --jobs "$FUZZ_JOBS" \
+            --timeout-ms "$TIMEOUT_MS" \
+            --memory-mb "$MEMORY_MB" \
+            --selectors "$SELECTORS"
+
+      - name: Publish job summary
+        if: always()
+        run: |
+          if [[ -f "$RUNNER_TEMP/lodestar-fuzzer-reports/summary.md" ]]; then
+            cat "$RUNNER_TEMP/lodestar-fuzzer-reports/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload reports and new findings
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: lodestar-z-fuzz-${{ github.run_id }}
+          path: ${{ runner.temp }}/lodestar-fuzzer-reports/
+          if-no-files-found: warn
+          retention-days: 30
