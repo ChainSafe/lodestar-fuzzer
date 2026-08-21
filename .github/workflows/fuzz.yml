@@ -32,9 +32,10 @@ jobs:
     runs-on: [self-hosted, linux, x64, fuzz]
     timeout-minutes: 300
     env:
+      AFL_BIN_DIR: ${{ vars.LODESTAR_FUZZ_AFL_BIN_DIR || '/opt/afl++/5.02c/bin' }}
       DURATION_SECONDS: ${{ inputs.duration_seconds || vars.LODESTAR_FUZZ_DURATION_SECONDS || '7200' }}
       FUZZ_JOBS: ${{ vars.LODESTAR_FUZZ_JOBS || '13' }}
-      MEMORY_MB: ${{ vars.LODESTAR_FUZZ_MEMORY_MB || '2048' }}
+      MEMORY_MB: ${{ vars.LODESTAR_FUZZ_MEMORY_MB || '1024' }}
       SELECTORS: ${{ inputs.selectors || '' }}
       STATE_ROOT: ${{ vars.LODESTAR_FUZZ_STATE_ROOT || '' }}
       TIMEOUT_MS: ${{ vars.LODESTAR_FUZZ_TIMEOUT_MS || '1000' }}
@@ -53,7 +54,7 @@ jobs:
 
       - name: Run finite campaigns
         run: |
-          python3 lodestar-fuzzer/controller.py \
+          PATH="$AFL_BIN_DIR:$PATH" python3 lodestar-fuzzer/controller.py \
             --project-root lodestar-z \
             --state-root "$STATE_ROOT" \
             --report-dir "$RUNNER_TEMP/lodestar-fuzzer-reports" \

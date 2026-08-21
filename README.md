@@ -21,6 +21,9 @@ The host must provide Python 3, Git, Zig 0.16.0, LLVM 18, and AFL++ 5.02c built 
 building. Tool installation and runner registration remain host-administration tasks and do not run
 inside each campaign.
 
+The workflow prepends `/opt/afl++/5.02c/bin` to `PATH`. Set the repository variable
+`LODESTAR_FUZZ_AFL_BIN_DIR` if the pinned installation lives elsewhere.
+
 The authoritative mutable state defaults to:
 
 ```text
@@ -40,7 +43,7 @@ The workflow runs every four hours. Its defaults are:
 | Campaign duration per target | 7,200 seconds | `LODESTAR_FUZZ_DURATION_SECONDS` |
 | Concurrent targets | 13 | `LODESTAR_FUZZ_JOBS` |
 | Per-execution timeout | 1,000 ms | `LODESTAR_FUZZ_TIMEOUT_MS` |
-| Per-worker memory limit | 2,048 MiB | `LODESTAR_FUZZ_MEMORY_MB` |
+| Per-worker memory limit | 1,024 MiB | `LODESTAR_FUZZ_MEMORY_MB` |
 
 `workflow_dispatch` can override the duration, Lodestar-Z ref, and comma-separated target or group
 selectors. Scheduled runs fuzz `main` and select every manifest target. Concurrency prevents two
@@ -93,7 +96,7 @@ python3 controller.py \
   --duration-seconds 7200 \
   --jobs 13 \
   --timeout-ms 1000 \
-  --memory-mb 2048
+  --memory-mb 1024
 ```
 
 Use `--selectors ssz_basic,bls` to run an explicit target and a manifest group. The default state
