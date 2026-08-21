@@ -149,6 +149,14 @@ def check_toolchain(project_root: Path) -> dict[str, str]:
     return {"zig": zig_version, "afl": afl_version, "llvm": llvm_version}
 
 
+def check_host() -> None:
+    core_pattern = Path("/proc/sys/kernel/core_pattern").read_text(encoding="utf-8").strip()
+    if core_pattern.startswith("|"):
+        raise ControllerError(
+            "host crash handling is not configured for AFL++; run the pinned afl-system-config during host provisioning"
+        )
+
+
 def resolve_project_path(fuzz_root: Path, raw: str, kind: str) -> Path:
     path = Path(raw)
     if path.is_absolute():
@@ -582,6 +590,7 @@ def main() -> int:
             raise ControllerError("another campaign owns the state directory") from error
         require_clean_checkout(project_root)
         toolchain = check_toolchain(project_root)
+        check_host()
         build_log = report_dir / "build.log"
         returncode, timed_out = PROCESSES.run(
             [str(require_tool("zig")), "build", "-Doptimize=ReleaseSafe"],

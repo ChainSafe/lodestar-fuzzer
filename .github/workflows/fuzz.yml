@@ -52,9 +52,6 @@ jobs:
           repository: ChainSafe/lodestar-z
           ref: ${{ inputs.lodestar_z_ref || 'main' }}
 
-      - name: Configure host for AFL++
-        run: sudo "$AFL_BIN_DIR/afl-system-config"
-
       - name: Run finite campaigns
         run: |
           PATH="$AFL_BIN_DIR:$PATH" python3 lodestar-fuzzer/controller.py \
