@@ -1,114 +1,95 @@
 # Lodestar Fuzzer
 
-Periodic AFL++ campaigns for [lodestar-z](https://github.com/ChainSafe/lodestar-z), modeled after
-[`roc-lang/roc-compiler-fuzz`](https://github.com/roc-lang/roc-compiler-fuzz).
+This repository runs finite AFL++ campaigns against every fuzz target published by
+[Lodestar-Z](https://github.com/ChainSafe/lodestar-z). Lodestar-Z owns target behavior, committed
+seeds, executable construction, and corpus replay. This repository owns the schedule, runner-local
+campaign corpus, result database, and GitHub Pages report.
 
-The repository owns scheduling and mutable campaign state. Lodestar-Z owns target semantics,
-instrumented binaries, repro binaries, committed seed corpora, and the generated target manifest.
-One scheduled GitHub Actions job checks out both repositories, builds the current project revision,
-replays its committed corpus, and runs every selected target for a finite duration.
+The workflow structure and the 20-entry global result policy are inspired by
+[`roc-lang/roc-compiler-fuzz`](https://github.com/roc-lang/roc-compiler-fuzz). The controller is an
+independent Zig and GitHub Actions adaptation for Lodestar-Z's target metadata and a single AFL++
+worker per target.
+
+## Deployment blocker
+
+The repository does not yet have a license. Maintainers must choose and add one before enabling the
+scheduled campaign or publishing the generated Pages site. This implementation intentionally does
+not make that project-policy decision.
+
+## Workflow
+
+Scheduled runs use Lodestar-Z `main` for 7,200 seconds. A manual run accepts a Lodestar-Z branch,
+tag, or commit and a per-target duration. The hosted discovery job checks out that ref once, runs:
+
+```sh
+cd lodestar-z/test/fuzz
+zig build fuzz-metadata
+```
+
+It validates the compact `zig-out/share/lodestar-z-fuzz/targets.json`, resolves the checkout to an
+exact 40-character commit SHA, and creates the target matrix. Every campaign job checks out that
+exact SHA and runs only:
+
+```sh
+zig build -Doptimize=ReleaseSafe -Dfuzz-target="$TARGET"
+zig build replay-corpus -Doptimize=ReleaseSafe -Dfuzz-target="$TARGET"
+```
+
+Each matrix item starts one finite `afl-fuzz` process in explore mode. The target's published
+`max_input_len` is passed through `-G`; AFL++ writes the single-worker state under `default/`.
+Campaign jobs upload results but never modify Git.
+
+The final hosted aggregation job requires exactly one artifact for every discovered target. The Zig
+merger rejects missing, duplicate, unexpected, or commit-mismatched results, merges the complete run
+into the latest `data.json`, retains 20 global entries, generates `www/index.html`, and performs at
+most one commit and push. A separate hosted job publishes the generated site through GitHub Pages.
 
 ## Runner contract
 
-The workflow uses a dedicated runner with these labels:
+Campaign jobs require these labels:
 
 ```text
-self-hosted, linux, x64, fuzz
+self-hosted, linux, x64, lodestar-fuzz
 ```
 
-The host must provide Python 3, Git, Zig 0.16.0, LLVM 18, and AFL++ 5.02c built from commit
-`011cd189801830253c66ecd3cd6919ec01b46c34`. The controller checks the Zig and AFL++ versions before
-building. Tool installation and runner registration remain host-administration tasks and do not run
-inside each campaign.
+The host must already provide Zig 0.16.0, LLVM 18, and AFL++ 5.02c. Set the repository variable
+`AFL_BIN_DIR` if AFL++ is not installed at `/opt/afl++/5.02c/bin`. The workflow checks versions and
+reads `/proc/sys/kernel/core_pattern`; it does not install packages, run `sudo`, or provision the
+runner. A piped `core_pattern` fails the preflight.
 
-The workflow prepends `/opt/afl++/5.02c/bin` to `PATH`. Set the repository variable
-`LODESTAR_FUZZ_AFL_BIN_DIR` if the pinned installation lives elsewhere.
-
-Provision the dedicated host with `/opt/afl++/5.02c/bin/afl-system-config` before enabling the
-workflow and after each reboot. This configures Linux crash handling and CPU settings required by
-AFL++. The workflow does not use `sudo` or mutate host configuration; the controller fails its
-read-only preflight if `core_pattern` still delegates crashes to an external utility. Do not attach
-this workflow to a shared host.
-
-The authoritative mutable state defaults to:
+Set the repository variable `STATE_ROOT` to relocate persistent state from
+`/var/lib/lodestar-fuzzer`. Each target owns:
 
 ```text
-~/.local/state/lodestar-fuzzer/lodestar-z
+$STATE_ROOT/
+├── corpus/<target>/
+│   ├── current -> versions/<generation>
+│   └── versions/<generation>/
+└── staging/<target>/<run-id>/
 ```
 
-Set the repository variable `LODESTAR_FUZZ_STATE_ROOT` to use another persistent path. Back up that
-directory as host data. GitHub artifacts contain reports and newly discovered inputs, but are not
-the corpus backup.
+The job overlays current inputs with `corpus/<target>-cmin`, runs AFL++, and minimizes the new
+`default/queue` with `afl-cmin`. If cmin fails, the unminimized queue is the only fallback. Before
+publication, every candidate must be a nonempty flat directory of regular inputs within the target
+limit and must pass `zig-out/bin/repro-<target>` as a directory replay.
 
-## Schedule and manual runs
+Publication renames the candidate to a new immutable version, creates a `current.next` symlink, and
+atomically renames the symlink over `current`. The live version is never changed in place. Cleanup
+retains the new current version and its immediate predecessor and only removes resolved paths below
+that target's private version and staging directories.
 
-The workflow runs every four hours. Its defaults are:
+## Zig tools
 
-| Setting | Default | Repository variable |
-| --- | ---: | --- |
-| Campaign duration per target | 7,200 seconds | `LODESTAR_FUZZ_DURATION_SECONDS` |
-| Concurrent targets | 13 | `LODESTAR_FUZZ_JOBS` |
-| Per-execution timeout | 1,000 ms | `LODESTAR_FUZZ_TIMEOUT_MS` |
-| Per-worker memory limit | 1,024 MiB | `LODESTAR_FUZZ_MEMORY_MB` |
-
-`workflow_dispatch` can override the duration, Lodestar-Z ref, and comma-separated target or group
-selectors. Scheduled runs fuzz `main` and select every manifest target. Concurrency prevents two
-campaigns from mutating the persistent state at the same time. AFL++ CPU affinity is disabled so
-the host scheduler can run the 13 target processes on the 12-core runner.
-
-## Project contract
-
-The controller expects the checked-out project to provide:
-
-```text
-test/fuzz/
-├── build.zig
-├── corpus/<target>-cmin/
-└── zig-out/
-    ├── bin/fuzz-<target>
-    ├── bin/repro-<target>
-    └── share/lodestar-z-fuzz/targets.tsv
-```
-
-It runs these commands from `test/fuzz`:
+Zig 0.16.0 builds all tools:
 
 ```sh
-zig build -Doptimize=ReleaseSafe
-zig build replay-corpus -Doptimize=ReleaseSafe
+zig build
+zig build collect-result -- <ref> <sha> <commit-time> <target> <max-input> \
+  <afl-output> <crashes> <hangs> <result.json>
+zig build merge-results -- <sha> <targets.json> <artifact-directory> <data.json>
+zig build generate-website
 ```
 
-`targets.tsv` schema 2 supplies each target's group, executable, committed corpus, and maximum input
-length. The controller passes that target-specific limit to AFL++ with `-G`; it does not impose
-Roc's uniform 16 KiB limit.
-
-Each finite run starts from the persistent minimized corpus plus newly committed seeds. After a
-run, the controller merges the new queue and invokes AFL++ 5.02c `afl-cmin` through stdin, without
-`@@`, `afl-cmin.bash`, or `AFL_NO_FORKSRV`. The minimized result atomically replaces that target's
-persistent corpus.
-
-Crash and hang inputs are minimized with `afl-tmin` when possible and otherwise retained unchanged,
-matching Roc's lossless fallback. Inputs are stored by SHA-256 under `failures/`; identical bytes are
-not stored twice. This is artifact deduplication, not proof that two different inputs represent
-different bugs. Stored failures are replayed against each newly built revision and reported as
-active, changed, or no longer reproduced. Promotion into a Lodestar-Z regression test remains a
-reviewed source change.
-
-## Local invocation
-
-The controller operates only on a clean project checkout:
-
-```sh
-python3 controller.py \
-  --project-root /path/to/lodestar-z \
-  --duration-seconds 7200 \
-  --jobs 13 \
-  --timeout-ms 1000 \
-  --memory-mb 1024
-```
-
-Use `--selectors ssz_basic,bls` to run an explicit target and a manifest group. The default state
-path may be overridden with `--state-root`. Reports are written below `reports/` unless
-`--report-dir` is supplied.
-
-The controller never pushes to Lodestar-Z, updates committed corpora, creates issues, or changes the
-runner configuration.
+The result schema keeps the requested ref, exact Lodestar-Z commit and commit timestamp, AFL start
+timestamp, target, coverage and execution counters, result kind, and a base64 failure input. A
+target records at most one minimized crash and one minimized hang, or one success entry.
