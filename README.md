@@ -10,12 +10,6 @@ The workflow structure and the 20-entry global result policy are inspired by
 independent Zig and GitHub Actions adaptation for Lodestar-Z's target metadata and a single AFL++
 worker per target.
 
-## Deployment blocker
-
-The repository does not yet have a license. Maintainers must choose and add one before enabling the
-scheduled campaign or publishing the generated Pages site. This implementation intentionally does
-not make that project-policy decision.
-
 ## Workflow
 
 Scheduled runs use Lodestar-Z `main` for 7,200 seconds. A manual run accepts a Lodestar-Z branch,
