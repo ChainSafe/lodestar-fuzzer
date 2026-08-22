@@ -1,0 +1,13 @@
+.{
+    .name = .lodestar_fuzzer,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0x888255dfcd4bd150,
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "data.json",
+        "README.md",
+        "src",
+    },
+}

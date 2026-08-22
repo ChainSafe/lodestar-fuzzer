@@ -1,0 +1,429 @@
+name: Fuzz Lodestar-Z
+
+on:
+  schedule:
+    - cron: "22 0/4 * * *"
+  workflow_dispatch:
+    inputs:
+      duration_seconds:
+        description: Seconds to run each target
+        type: number
+        default: 7200
+      lodestar_z_ref:
+        description: Lodestar-Z branch, tag, or commit
+        type: string
+        default: main
+
+run-name: Fuzz Lodestar-Z ${{ inputs.lodestar_z_ref || 'main' }}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  AFL_BIN_DIR: ${{ vars.AFL_BIN_DIR || '/opt/afl++/5.02c/bin' }}
+  DURATION_SECONDS: ${{ inputs.duration_seconds || '7200' }}
+  LODESTAR_Z_REF: ${{ inputs.lodestar_z_ref || 'main' }}
+  STATE_ROOT: ${{ vars.STATE_ROOT || '/var/lib/lodestar-fuzzer' }}
+
+jobs:
+  discover:
+    runs-on: ubuntu-24.04
+    outputs:
+      commit_sha: ${{ steps.metadata.outputs.commit_sha }}
+      commit_timestamp: ${{ steps.metadata.outputs.commit_timestamp }}
+      matrix: ${{ steps.metadata.outputs.matrix }}
+    steps:
+      - name: Checkout Lodestar-Z
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          path: lodestar-z
+          repository: ChainSafe/lodestar-z
+          ref: ${{ env.LODESTAR_Z_REF }}
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: 0.16.0
+          cache: false
+
+      - name: Resolve revision and targets
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit_sha="$(git -C lodestar-z rev-parse --verify HEAD^{commit})"
+          [[ "$commit_sha" =~ ^[0-9a-f]{40}$ ]]
+          commit_timestamp="$(git -C lodestar-z show -s --format=%ct HEAD)"
+          [[ "$commit_timestamp" =~ ^[1-9][0-9]*$ ]]
+
+          cd lodestar-z/test/fuzz
+          zig build fuzz-metadata
+          matrix="$(jq -c -e '
+            .include as $targets |
+            ($targets | length > 0) and
+            ($targets | length <= 128) and
+            all($targets[];
+              (.target | type == "string") and
+              (.target | test("^[a-z0-9_]+$")) and
+              (.max_input_len | type == "number") and
+              (.max_input_len > 0)
+            )
+          ' zig-out/share/lodestar-z-fuzz/targets.json >/dev/null &&
+            jq -c '.' zig-out/share/lodestar-z-fuzz/targets.json)"
+
+          echo "commit_sha=$commit_sha" >> "$GITHUB_OUTPUT"
+          echo "commit_timestamp=$commit_timestamp" >> "$GITHUB_OUTPUT"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  fuzz:
+    needs: discover
+    runs-on: [self-hosted, linux, x64, lodestar-fuzz]
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      max-parallel: 12
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    env:
+      COMMIT_SHA: ${{ needs.discover.outputs.commit_sha }}
+      COMMIT_TIMESTAMP: ${{ needs.discover.outputs.commit_timestamp }}
+      MAX_INPUT_LEN: ${{ matrix.max_input_len }}
+      TARGET: ${{ matrix.target }}
+    steps:
+      - name: Checkout controller
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          path: lodestar-fuzzer
+
+      - name: Checkout Lodestar-Z
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          path: lodestar-z
+          repository: ChainSafe/lodestar-z
+          ref: ${{ env.COMMIT_SHA }}
+
+      - name: Verify inputs and toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TARGET" =~ ^[a-z0-9_]+$ ]]
+          [[ "$MAX_INPUT_LEN" =~ ^[1-9][0-9]*$ ]]
+          [[ "$DURATION_SECONDS" =~ ^[1-9][0-9]*$ ]]
+          [[ "$(git -C lodestar-z rev-parse --verify HEAD^{commit})" == "$COMMIT_SHA" ]]
+          [[ "$(zig version)" == "0.16.0" ]]
+          [[ "$(llvm-config-18 --version)" == 18.* ]]
+          [[ -x "$AFL_BIN_DIR/afl-fuzz" ]]
+          [[ -x "$AFL_BIN_DIR/afl-cmin" ]]
+          [[ -x "$AFL_BIN_DIR/afl-tmin" ]]
+          "$AFL_BIN_DIR/afl-fuzz" --version | grep -F "5.02c"
+          "$AFL_BIN_DIR/afl-cmin" --help >/dev/null
+          core_pattern="$(< /proc/sys/kernel/core_pattern)"
+          [[ "$core_pattern" != \|* ]]
+
+      - name: Build and replay committed inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$AFL_BIN_DIR:$PATH"
+          cd lodestar-z/test/fuzz
+          zig build -Doptimize=ReleaseSafe -Dfuzz-target="$TARGET"
+          zig build replay-corpus -Doptimize=ReleaseSafe -Dfuzz-target="$TARGET"
+
+      - name: Prepare campaign input
+        shell: bash
+        run: |
+          set -euo pipefail
+          target_root="$STATE_ROOT/corpus/$TARGET"
+          versions_root="$target_root/versions"
+          staging_target="$STATE_ROOT/staging/$TARGET"
+          generation="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          stage="$staging_target/$generation"
+          input="$stage/input"
+          output="$stage/output"
+          mkdir -p "$versions_root" "$staging_target"
+
+          current_name=""
+          if [[ -e "$target_root/current" || -L "$target_root/current" ]]; then
+            [[ -L "$target_root/current" ]]
+            current_link="$(readlink "$target_root/current")"
+            [[ "$current_link" =~ ^versions/[A-Za-z0-9._-]+$ ]]
+            current_real="$(realpath -e "$target_root/current")"
+            [[ "$current_real" == "$versions_root/"* ]]
+            current_name="${current_link#versions/}"
+          fi
+
+          staging_manifest="$RUNNER_TEMP/staging-$TARGET"
+          find "$staging_target" -mindepth 1 -maxdepth 1 -printf '%f\0' |
+            sort -z > "$staging_manifest"
+          mapfile -d '' -t staging_runs < "$staging_manifest"
+          (( ${#staging_runs[@]} <= 64 ))
+          for run in "${staging_runs[@]}"; do
+            [[ "$run" =~ ^[A-Za-z0-9._-]+$ ]]
+            [[ -d "$staging_target/$run" && ! -L "$staging_target/$run" ]]
+          done
+          for run in "${staging_runs[@]}"; do
+            rm -rf -- "$staging_target/$run"
+          done
+
+          next_manifest="$RUNNER_TEMP/current-next-$TARGET"
+          find -P "$target_root" -mindepth 1 -maxdepth 1 -name 'current.next-*' -printf '%f\0' |
+            sort -z > "$next_manifest"
+          mapfile -d '' -t next_links < "$next_manifest"
+          (( ${#next_links[@]} <= 64 ))
+          for name in "${next_links[@]}"; do
+            [[ "$name" =~ ^current\.next-[A-Za-z0-9._-]+$ ]]
+            [[ -L "$target_root/$name" ]]
+            [[ "$(readlink "$target_root/$name")" =~ ^versions/[A-Za-z0-9._-]+$ ]]
+          done
+          for name in "${next_links[@]}"; do
+            rm -- "$target_root/$name"
+          done
+
+          versions_manifest="$RUNNER_TEMP/versions-$TARGET"
+          find "$versions_root" -mindepth 1 -maxdepth 1 -printf '%f\0' |
+            sort -z > "$versions_manifest"
+          mapfile -d '' -t versions < "$versions_manifest"
+          (( ${#versions[@]} <= 64 ))
+          for name in "${versions[@]}"; do
+            [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]]
+            [[ -d "$versions_root/$name" && ! -L "$versions_root/$name" ]]
+          done
+          for name in "${versions[@]}"; do
+            if [[ "$name" != "$current_name" ]]; then
+              rm -rf -- "$versions_root/$name"
+            fi
+          done
+          retained_versions=0
+          if [[ -n "$current_name" ]]; then
+            retained_versions=1
+          fi
+          (( retained_versions < 64 ))
+
+          [[ ! -e "$stage" && ! -L "$stage" ]]
+          mkdir -p "$input" "$output"
+          if [[ -n "$current_name" ]]; then
+            cp -a "$current_real/." "$input/"
+          fi
+          cp -a "lodestar-z/test/fuzz/corpus/$TARGET-cmin/." "$input/"
+
+          [[ -n "$(find "$input" -mindepth 1 -maxdepth 1 -type f -print -quit)" ]]
+          [[ -z "$(find "$input" -mindepth 1 -maxdepth 1 ! -type f -print -quit)" ]]
+          [[ -z "$(find "$input" -maxdepth 1 -type f -size +"${MAX_INPUT_LEN}"c -print -quit)" ]]
+
+          echo "CAMPAIGN_INPUT=$input" >> "$GITHUB_ENV"
+          echo "CAMPAIGN_OUTPUT=$output" >> "$GITHUB_ENV"
+          echo "CAMPAIGN_STAGE=$stage" >> "$GITHUB_ENV"
+          echo "TARGET_ROOT=$target_root" >> "$GITHUB_ENV"
+          echo "VERSIONS_ROOT=$versions_root" >> "$GITHUB_ENV"
+
+      - name: Run target
+        shell: bash
+        env:
+          AFL_NO_CRASH_README: "1"
+          AFL_NO_UI: "1"
+        run: |
+          set -euo pipefail
+          export PATH="$AFL_BIN_DIR:$PATH"
+          "$AFL_BIN_DIR/afl-fuzz" \
+            -i "$CAMPAIGN_INPUT" \
+            -o "$CAMPAIGN_OUTPUT" \
+            -V "$DURATION_SECONDS" \
+            -p explore \
+            -t 1000+ \
+            -m 1024 \
+            -G "$MAX_INPUT_LEN" \
+            -- "lodestar-z/test/fuzz/zig-out/bin/fuzz-$TARGET"
+
+      - name: Minimize and publish corpus
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$AFL_BIN_DIR:$PATH"
+          queue="$CAMPAIGN_OUTPUT/default/queue"
+          candidate="$CAMPAIGN_STAGE/candidate"
+          binary="lodestar-z/test/fuzz/zig-out/bin/fuzz-$TARGET"
+          repro="lodestar-z/test/fuzz/zig-out/bin/repro-$TARGET"
+          [[ -d "$queue" ]]
+
+          set +e
+          "$AFL_BIN_DIR/afl-cmin" \
+            -i "$queue" \
+            -o "$candidate" \
+            -t 1000 \
+            -m 1024 \
+            -- "$binary" \
+            > "$CAMPAIGN_STAGE/cmin.log" 2>&1
+          cmin_status=$?
+          set -e
+          if (( cmin_status != 0 )); then
+            rm -rf -- "$candidate"
+            mkdir "$candidate"
+            cp -a "$queue/." "$candidate/"
+          fi
+
+          [[ -n "$(find "$candidate" -mindepth 1 -maxdepth 1 -type f -print -quit)" ]]
+          [[ -z "$(find "$candidate" -mindepth 1 -maxdepth 1 ! -type f -print -quit)" ]]
+          [[ -z "$(find "$candidate" -maxdepth 1 -type f -size +"${MAX_INPUT_LEN}"c -print -quit)" ]]
+          "$repro" "$candidate"
+
+          generation="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          version="$VERSIONS_ROOT/$generation"
+          [[ ! -e "$version" ]]
+          mv "$candidate" "$version"
+          next_link="$TARGET_ROOT/current.next-$generation"
+          [[ ! -e "$next_link" && ! -L "$next_link" ]]
+          ln -s "versions/$generation" "$next_link"
+          mv -Tf "$next_link" "$TARGET_ROOT/current"
+          [[ "$(realpath -e "$TARGET_ROOT/current")" == "$version" ]]
+
+      - name: Minimize failures and collect result
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$AFL_BIN_DIR:$PATH"
+          binary="lodestar-z/test/fuzz/zig-out/bin/fuzz-$TARGET"
+          crashes_source="$CAMPAIGN_OUTPUT/default/crashes"
+          hangs_source="$CAMPAIGN_OUTPUT/default/hangs"
+          result_root="$RUNNER_TEMP/lodestar-fuzzer-result"
+          crashes="$result_root/crashes"
+          hangs="$result_root/hangs"
+          mkdir -p "$crashes" "$hangs"
+          [[ -d "$crashes_source" ]]
+          [[ -d "$hangs_source" ]]
+
+          minimize_directory() {
+            local source="$1"
+            local destination="$2"
+            local limit="$3"
+            local hang_mode="$4"
+            local manifest="$CAMPAIGN_STAGE/${hang_mode}-failures"
+            local count=0
+            local deadline_seconds=$((SECONDS + 3600))
+            find "$source" -mindepth 1 -maxdepth 1 -type f -print0 |
+              sort -z > "$manifest"
+            while IFS= read -r -d '' input; do
+              ((count += 1))
+              if (( count > limit || SECONDS >= deadline_seconds )); then
+                break
+              fi
+              digest="$(sha256sum "$input" | cut -d ' ' -f 1)"
+              output="$destination/$digest"
+              args=(-i "$input" -o "$output" -t 1000 -m 1024)
+              if [[ "$hang_mode" == "true" ]]; then
+                args+=(-H)
+              fi
+              if ! timeout --signal=TERM --kill-after=10s 300 \
+                "$AFL_BIN_DIR/afl-tmin" "${args[@]}" -- "$binary"; then
+                cp "$input" "$output"
+              fi
+            done < "$manifest"
+          }
+
+          minimize_directory "$crashes_source" "$crashes" 200 false
+          minimize_directory "$hangs_source" "$hangs" 8 true
+
+          cd lodestar-fuzzer
+          zig build collect-result -- \
+            "$LODESTAR_Z_REF" \
+            "$COMMIT_SHA" \
+            "$COMMIT_TIMESTAMP" \
+            "$TARGET" \
+            "$MAX_INPUT_LEN" \
+            "$CAMPAIGN_OUTPUT" \
+            "$crashes" \
+            "$hangs" \
+            "$result_root/result.json"
+
+          rm -rf -- "$CAMPAIGN_STAGE"
+
+      - name: Upload target result
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: result-${{ env.COMMIT_SHA }}-${{ env.TARGET }}
+          path: ${{ runner.temp }}/lodestar-fuzzer-result/result.json
+          if-no-files-found: error
+          retention-days: 30
+
+  aggregate:
+    if: always() && needs.discover.result == 'success'
+    needs: [discover, fuzz]
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Checkout controller
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+
+      - name: Checkout tested Lodestar-Z revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          path: lodestar-z
+          repository: ChainSafe/lodestar-z
+          ref: ${{ needs.discover.outputs.commit_sha }}
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: 0.16.0
+          cache: false
+
+      - name: Download target results
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: result-${{ needs.discover.outputs.commit_sha }}-*
+          path: ${{ runner.temp }}/lodestar-fuzzer-results
+
+      - name: Merge database and generate site
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git -C lodestar-z rev-parse --verify HEAD^{commit})" == "${{ needs.discover.outputs.commit_sha }}" ]]
+          cd lodestar-z/test/fuzz
+          zig build fuzz-metadata
+          cd ../../../
+
+          zig build merge-results -- \
+            "${{ needs.discover.outputs.commit_sha }}" \
+            "lodestar-z/test/fuzz/zig-out/share/lodestar-z-fuzz/targets.json" \
+            "$RUNNER_TEMP/lodestar-fuzzer-results" \
+            data.json
+          zig build generate-website
+
+      - name: Record database
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- data.json; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data.json
+          git commit -m "chore: update fuzz results"
+          git push origin HEAD:main
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
+        with:
+          path: www
+
+  deploy:
+    needs: aggregate
+    runs-on: ubuntu-24.04
+    permissions:
+      id-token: write
+      pages: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy Pages
+        id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5
