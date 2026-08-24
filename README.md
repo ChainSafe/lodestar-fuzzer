@@ -5,7 +5,7 @@ This repository runs finite AFL++ campaigns against every fuzz target published 
 seeds, executable construction, and corpus replay. This repository owns the schedule, runner-local
 campaign corpus, result database, and GitHub Pages report.
 
-The workflow structure and the 20-entry global result policy are inspired by
+The workflow structure is inspired by
 [`roc-lang/roc-compiler-fuzz`](https://github.com/roc-lang/roc-compiler-fuzz). The controller is an
 independent Zig and GitHub Actions adaptation for Lodestar-Z's target metadata and a single AFL++
 worker per target.
@@ -34,9 +34,10 @@ Each matrix item starts one finite `afl-fuzz` process in explore mode. The targe
 Campaign jobs upload results but never modify Git.
 
 The final hosted aggregation job requires exactly one artifact for every discovered target. The Zig
-merger rejects missing, duplicate, unexpected, or commit-mismatched results, merges the complete run
-into the latest `data.json`, retains 20 global entries, generates `www/index.html`, and performs at
-most one commit and push. A separate hosted job publishes the generated site through GitHub Pages.
+merger rejects missing, duplicate, unexpected, or campaign-mismatched results, retains the latest
+three complete campaigns in `data.json`, generates `www/index.html`, and performs at most one commit
+and push. Re-running the same GitHub Actions run replaces that campaign. A separate hosted job
+publishes the generated site through GitHub Pages.
 
 ## Runner contract
 
@@ -78,15 +79,23 @@ Zig 0.16.0 builds all tools:
 
 ```sh
 zig build
-zig build collect-result -- <ref> <sha> <commit-time> <target> <max-input> \
+zig build collect-result -- <campaign-id> <ref> <sha> <commit-time> <target> <max-input> \
   <afl-output> <crashes> <hangs> <result.json>
-zig build merge-results -- <sha> <targets.json> <artifact-directory> <data.json>
+zig build merge-results -- <campaign-id> <ref> <sha> <commit-time> <targets.json> \
+  <artifact-directory> <data.json>
 zig build generate-website
 ```
 
-The result schema keeps the requested ref, exact Lodestar-Z commit and commit timestamp, AFL start
-timestamp, target, AFL map-edge and execution counters, result kind, and a base64 failure input.
-[AFL map edges](https://aflplus.plus/docs/afl-fuzz_approach/)
-are instrumentation slots, not source line or function coverage. Compare them only between runs of
-the same target and instrumentation. A target records at most one minimized crash and one minimized
-hang, or one success entry.
+The versioned result database groups every target from one GitHub Actions run under its campaign ID.
+Each target records run time, execution count, exit queue size, locally discovered queue entries,
+AFL map edges, crash and hang counts, and at most one minimized sample of each failure kind. The
+per-target artifact is limited to 4 MiB. The database is limited to 32 MiB and updates atomically,
+so an oversized result fails without replacing the previous database.
+
+The merger accepts the original flat result array only as a one-time legacy input. The first
+campaign-aware update replaces those rows because their campaign membership cannot be recovered
+reliably.
+
+[AFL map edges](https://aflplus.plus/docs/afl-fuzz_approach/) are instrumentation slots, not source
+line or function coverage. The Pages report emphasizes newly discovered queue entries, corpus size,
+execution throughput, duration, failures, and the absolute map-edge count for each target.
