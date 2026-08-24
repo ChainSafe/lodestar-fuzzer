@@ -87,9 +87,19 @@ fn writeHeader(writer: *std.Io.Writer) !void {
         \\<main>
         \\  <h1>Lodestar-Z fuzz results</h1>
         \\  <p><a href="https://github.com/ChainSafe/lodestar-fuzzer/blob/main/data.json">Raw data</a></p>
+        \\  <p class="foot">
+        \\    <a href="https://aflplus.plus/docs/afl-fuzz_approach/">AFL map edges</a>
+        \\    are coverage-map slots reached in each instrumented target binary,
+        \\    not source line or function coverage. Compare them only between runs of the same
+        \\    target and instrumentation.
+        \\  </p>
         \\  <table>
         \\    <thead>
-        \\      <tr><th>Commit</th><th>Ref</th><th>Target</th><th>Result</th><th>Run start</th><th>Coverage</th><th>Executions</th><th>Failure input</th></tr>
+        \\      <tr>
+        \\        <th>Commit</th><th>Ref</th><th>Target</th><th>Result</th>
+        \\        <th>Run start</th><th>AFL map edges</th><th>Executions</th>
+        \\        <th>Failure input</th>
+        \\      </tr>
         \\    </thead>
         \\    <tbody>
         \\
@@ -117,12 +127,16 @@ fn writeResults(writer: *std.Io.Writer, results: []const FuzzResult) !void {
             result.unique_crashes,
             result.unique_hangs,
         });
-        try writer.print("</td><td>{d}</td><td>{d} / {d}</td><td>{d}</td><td>", .{
-            result.start_timestamp,
-            result.edges_found,
-            result.total_edges,
-            result.total_execs,
-        });
+        try writer.print(
+            "</td><td>{d}</td><td>{d} found<br>" ++
+                "<small>{d} instrumented</small></td><td>{d}</td><td>",
+            .{
+                result.start_timestamp,
+                result.edges_found,
+                result.total_edges,
+                result.total_execs,
+            },
+        );
         if (result.kind == .success) {
             try writer.writeAll("None");
         } else {

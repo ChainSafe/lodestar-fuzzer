@@ -85,5 +85,8 @@ zig build generate-website
 ```
 
 The result schema keeps the requested ref, exact Lodestar-Z commit and commit timestamp, AFL start
-timestamp, target, coverage and execution counters, result kind, and a base64 failure input. A
-target records at most one minimized crash and one minimized hang, or one success entry.
+timestamp, target, AFL map-edge and execution counters, result kind, and a base64 failure input.
+[AFL map edges](https://aflplus.plus/docs/afl-fuzz_approach/)
+are instrumentation slots, not source line or function coverage. Compare them only between runs of
+the same target and instrumentation. A target records at most one minimized crash and one minimized
+hang, or one success entry.
