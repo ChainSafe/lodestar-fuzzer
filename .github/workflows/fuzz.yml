@@ -49,7 +49,7 @@ jobs:
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
         with:
           version: 0.16.0
-          cache: false
+          use-cache: false
 
       - name: Resolve revision and targets
         id: metadata
@@ -372,7 +372,7 @@ jobs:
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
         with:
           version: 0.16.0
-          cache: false
+          use-cache: false
 
       - name: Download target results
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
