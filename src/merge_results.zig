@@ -1,8 +1,7 @@
 const std = @import("std");
-const FuzzResult = @import("FuzzResult.zig");
+const Database = @import("Database.zig");
 
-const result_limit: u8 = 20;
-const target_count_max: u8 = 128;
+const legacy_result_limit: u8 = 20;
 
 pub fn main(init: std.process.Init) !void {
     var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
@@ -14,13 +13,19 @@ pub fn main(init: std.process.Init) !void {
     const arena = arena_state.allocator();
 
     const args = try init.minimal.args.toSlice(arena);
-    if (args.len != 5) return error.ExpectedFourArguments;
+    if (args.len != 8) return error.ExpectedSevenArguments;
 
-    const expected_sha = args[1];
-    const targets_path = args[2];
-    const results_path = args[3];
-    const database_path = args[4];
-    try validateSHA(expected_sha);
+    const campaign_id = try std.fmt.parseInt(u64, args[1], 10);
+    const expected_ref = args[2];
+    const expected_sha = args[3];
+    const expected_commit_timestamp = try std.fmt.parseInt(u64, args[4], 10);
+    const targets_path = args[5];
+    const results_path = args[6];
+    const database_path = args[7];
+    if (campaign_id == 0) return error.InvalidCampaignID;
+    try Database.validateRef(expected_ref);
+    try Database.validateSHA(expected_sha);
+    if (expected_commit_timestamp == 0) return error.InvalidCommitTimestamp;
 
     const manifest_content = try std.Io.Dir.cwd().readFileAlloc(
         init.io,
@@ -36,77 +41,102 @@ pub fn main(init: std.process.Init) !void {
     );
     try validateManifest(manifest);
 
-    const found = try arena.alloc(bool, manifest.include.len);
-    @memset(found, false);
-
-    var new_results: std.ArrayList(FuzzResult) = .empty;
-    defer new_results.deinit(gpa);
-    try loadMatrixResults(
-        arena,
-        init.io,
-        expected_sha,
-        manifest,
-        found,
-        results_path,
-        &new_results,
-        gpa,
-    );
-
-    for (found) |target_found| {
-        if (!target_found) return error.MissingTargetResult;
-    }
+    const new_results = try loadMatrixResults(arena, init.io, .{
+        .campaign_id = campaign_id,
+        .expected_ref = expected_ref,
+        .expected_sha = expected_sha,
+        .expected_commit_timestamp = expected_commit_timestamp,
+        .manifest = manifest,
+        .results_path = results_path,
+    });
+    const new_campaign: Database.Campaign = .{
+        .campaign_id = campaign_id,
+        .ref = expected_ref,
+        .commit_sha = expected_sha,
+        .commit_timestamp = expected_commit_timestamp,
+        .start_timestamp = Database.campaignStartTimestamp(new_results),
+        .results = new_results,
+    };
 
     const database_content = try std.Io.Dir.cwd().readFileAlloc(
         init.io,
         database_path,
         arena,
-        .limited(32 * 1024 * 1024),
+        .limited(Database.database_size_max + 1),
     );
-    const old_results = try std.json.parseFromSliceLeaky(
-        []FuzzResult,
-        arena,
-        database_content,
-        .{ .ignore_unknown_fields = false },
-    );
-    if (old_results.len > result_limit) return error.DatabaseExceedsResultLimit;
+    if (database_content.len > Database.database_size_max) return error.DatabaseTooLarge;
+    const parsed_database = try Database.parse(arena, database_content);
 
-    try new_results.appendSlice(gpa, old_results);
-    std.mem.sort(FuzzResult, new_results.items, {}, FuzzResult.lessThan);
+    var campaigns: std.ArrayList(Database.Campaign) = .empty;
+    defer campaigns.deinit(gpa);
+    try campaigns.append(gpa, new_campaign);
+    switch (parsed_database) {
+        .legacy => |legacy| {
+            if (legacy.len > legacy_result_limit) return error.LegacyDatabaseExceedsResultLimit;
+        },
+        .current => |database| {
+            try database.validate(arena);
+            for (database.campaigns) |campaign| {
+                if (campaign.campaign_id != campaign_id) {
+                    try campaigns.append(gpa, campaign);
+                }
+            }
+        },
+    }
 
-    const output_len = @min(new_results.items.len, result_limit);
-    try writeJSON(init.io, database_path, new_results.items[0..output_len]);
+    std.mem.sort(Database.Campaign, campaigns.items, {}, Database.campaignLessThan);
+    if (campaigns.items.len > Database.campaign_limit) {
+        campaigns.shrinkRetainingCapacity(Database.campaign_limit);
+    }
+
+    try Database.writeAtomic(.{
+        .schema_version = Database.schema_version_current,
+        .campaigns = campaigns.items,
+    }, gpa, init.io, database_path);
 }
+
+const LoadMatrixOptions = struct {
+    campaign_id: u64,
+    expected_ref: []const u8,
+    expected_sha: []const u8,
+    expected_commit_timestamp: u64,
+    manifest: Manifest,
+    results_path: []const u8,
+};
 
 fn loadMatrixResults(
     arena: std.mem.Allocator,
     io: std.Io,
-    expected_sha: []const u8,
-    manifest: Manifest,
-    found: []bool,
-    results_path: []const u8,
-    new_results: *std.ArrayList(FuzzResult),
-    gpa: std.mem.Allocator,
-) !void {
+    options: LoadMatrixOptions,
+) ![]const Database.TargetResult {
     var results_directory = try std.Io.Dir.cwd().openDir(
         io,
-        results_path,
+        options.results_path,
         .{ .iterate = true },
     );
     defer results_directory.close(io);
 
-    const artifact_prefix = try std.fmt.allocPrint(arena, "result-{s}-", .{expected_sha});
+    const found = try arena.alloc(bool, options.manifest.include.len);
+    @memset(found, false);
+    const results = try arena.alloc(Database.TargetResult, options.manifest.include.len);
+
+    const artifact_prefix = try std.fmt.allocPrint(
+        arena,
+        "result-{s}-",
+        .{options.expected_sha},
+    );
     var artifact_count: u16 = 0;
     var iterator = results_directory.iterate();
     while (try iterator.next(io)) |entry| {
         artifact_count += 1;
-        if (artifact_count > target_count_max) return error.TooManyResultArtifacts;
+        if (artifact_count > Database.target_count_max) return error.TooManyResultArtifacts;
         if (entry.kind != .directory) return error.InvalidResultArtifact;
         if (!std.mem.startsWith(u8, entry.name, artifact_prefix)) {
             return error.UnexpectedResultArtifact;
         }
 
         const target_name = entry.name[artifact_prefix.len..];
-        const target_index = findTarget(manifest.include, target_name) orelse {
+        const target_index = findTarget(options.manifest.include, target_name) orelse {
             return error.UnexpectedTargetResult;
         };
         if (found[target_index]) return error.DuplicateTargetResult;
@@ -123,26 +153,33 @@ fn loadMatrixResults(
             io,
             "result.json",
             arena,
-            .limited(4 * 1024 * 1024),
+            .limited(Database.artifact_size_max + 1),
         );
-        const results = try std.json.parseFromSliceLeaky(
-            []FuzzResult,
+        if (content.len > Database.artifact_size_max) return error.ResultArtifactTooLarge;
+        const artifact = try std.json.parseFromSliceLeaky(
+            Database.TargetArtifact,
             arena,
             content,
             .{ .ignore_unknown_fields = false },
         );
-        try validateTargetResults(
+        try validateTargetArtifact(
             arena,
-            expected_sha,
-            manifest.include[target_index],
-            results,
+            options,
+            options.manifest.include[target_index],
+            artifact,
         );
 
-        try new_results.appendSlice(gpa, results);
+        results[target_index] = artifact.result;
         found[target_index] = true;
     }
 
-    if (artifact_count != manifest.include.len) return error.ResultArtifactCountMismatch;
+    if (artifact_count != options.manifest.include.len) {
+        return error.ResultArtifactCountMismatch;
+    }
+    for (found) |target_found| {
+        if (!target_found) return error.MissingTargetResult;
+    }
+    return results;
 }
 
 fn validateArtifactDirectory(io: std.Io, directory: std.Io.Dir) !void {
@@ -161,87 +198,31 @@ fn validateArtifactDirectory(io: std.Io, directory: std.Io.Dir) !void {
     if (!found_result) return error.MissingResultJSON;
 }
 
-fn validateTargetResults(
+fn validateTargetArtifact(
     arena: std.mem.Allocator,
-    expected_sha: []const u8,
+    options: LoadMatrixOptions,
     target: Target,
-    results: []const FuzzResult,
+    artifact: Database.TargetArtifact,
 ) !void {
-    if (results.len == 0) return error.EmptyTargetResult;
-    if (results.len > 2) return error.TooManyTargetResults;
-
-    var found_success = false;
-    var found_crash = false;
-    var found_hang = false;
-    for (results) |result| {
-        if (!std.mem.eql(u8, result.commit_sha, expected_sha)) {
-            return error.CommitSHAMismatch;
-        }
-        if (!std.mem.eql(u8, result.target, target.target)) {
-            return error.TargetMismatch;
-        }
-        try validateResult(arena, result, target.max_input_len);
-
-        switch (result.kind) {
-            .success => {
-                if (found_success) return error.DuplicateResultKind;
-                found_success = true;
-            },
-            .crash => {
-                if (found_crash) return error.DuplicateResultKind;
-                found_crash = true;
-            },
-            .hang => {
-                if (found_hang) return error.DuplicateResultKind;
-                found_hang = true;
-            },
-        }
+    if (artifact.campaign_id != options.campaign_id) return error.CampaignIDMismatch;
+    if (!std.mem.eql(u8, artifact.ref, options.expected_ref)) return error.RefMismatch;
+    if (!std.mem.eql(u8, artifact.commit_sha, options.expected_sha)) {
+        return error.CommitSHAMismatch;
     }
-
-    if (found_success and results.len != 1) return error.SuccessWithFailure;
-    if (results.len == 2 and !FuzzResult.sameRun(results[0], results[1])) {
-        return error.InconsistentTargetResults;
+    if (artifact.commit_timestamp != options.expected_commit_timestamp) {
+        return error.CommitTimestampMismatch;
     }
-}
-
-fn validateResult(
-    arena: std.mem.Allocator,
-    result: FuzzResult,
-    max_input_len: u32,
-) !void {
-    try validateSHA(result.commit_sha);
-    if (result.branch.len == 0) return error.EmptyBranch;
-    if (result.branch.len > 256) return error.BranchTooLong;
-    if (result.commit_timestamp == 0) return error.InvalidCommitTimestamp;
-    if (result.start_timestamp == 0) return error.InvalidStartTimestamp;
-    if (result.total_execs == 0) return error.NoExecutions;
-    if (result.edges_found > result.total_edges) return error.InvalidEdgeCounts;
-
-    if (result.kind == .success) {
-        if (result.encoded_failure.len != 0) return error.SuccessHasFailure;
-        return;
-    }
-
-    const decoded_len = try std.base64.standard.Decoder.calcSizeForSlice(
-        result.encoded_failure,
-    );
-    if (decoded_len > max_input_len) return error.FailureTooLong;
-    const decoded = try arena.alloc(u8, decoded_len);
-    try std.base64.standard.Decoder.decode(decoded, result.encoded_failure);
+    if (!std.mem.eql(u8, artifact.result.target, target.target)) return error.TargetMismatch;
+    try Database.validateTargetResult(arena, artifact.result, target.max_input_len);
 }
 
 fn validateManifest(manifest: Manifest) !void {
     if (manifest.include.len == 0) return error.EmptyTargetMatrix;
-    if (manifest.include.len > target_count_max) return error.TooManyTargets;
+    if (manifest.include.len > Database.target_count_max) return error.TooManyTargets;
 
     for (manifest.include, 0..) |target, target_index| {
-        if (target.target.len == 0) return error.EmptyTargetName;
-        if (target.target.len > 128) return error.TargetNameTooLong;
+        try Database.validateTargetName(target.target);
         if (target.max_input_len == 0) return error.InvalidInputLimit;
-        for (target.target) |byte| {
-            const allowed = std.ascii.isAlphanumeric(byte) or byte == '-' or byte == '_';
-            if (!allowed) return error.InvalidTargetName;
-        }
         for (manifest.include[0..target_index]) |previous| {
             if (std.mem.eql(u8, previous.target, target.target)) {
                 return error.DuplicateTarget;
@@ -255,30 +236,6 @@ fn findTarget(targets: []const Target, name: []const u8) ?usize {
         if (std.mem.eql(u8, target.target, name)) return index;
     }
     return null;
-}
-
-fn validateSHA(commit_sha: []const u8) !void {
-    if (commit_sha.len != 40) return error.InvalidCommitSHA;
-    for (commit_sha) |byte| {
-        if (!std.ascii.isHex(byte)) return error.InvalidCommitSHA;
-    }
-}
-
-fn writeJSON(io: std.Io, path: []const u8, results: []const FuzzResult) !void {
-    std.debug.assert(results.len <= result_limit);
-
-    var atomic_file = try std.Io.Dir.cwd().createFileAtomic(io, path, .{
-        .replace = true,
-    });
-    defer atomic_file.deinit(io);
-
-    var buffer: [4096]u8 = undefined;
-    var writer = atomic_file.file.writer(io, &buffer);
-    try writer.interface.print("{f}\n", .{
-        std.json.fmt(results, .{ .whitespace = .indent_2 }),
-    });
-    try writer.interface.flush();
-    try atomic_file.replace(io);
 }
 
 const Manifest = struct {

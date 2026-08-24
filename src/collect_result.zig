@@ -1,5 +1,5 @@
 const std = @import("std");
-const FuzzResult = @import("FuzzResult.zig");
+const Database = @import("Database.zig");
 
 const failure_entry_count_max: u32 = 256;
 const stats_line_count_max: u32 = 1_024;
@@ -14,21 +14,23 @@ pub fn main(init: std.process.Init) !void {
     const arena = arena_state.allocator();
 
     const args = try init.minimal.args.toSlice(arena);
-    if (args.len != 10) return error.ExpectedNineArguments;
+    if (args.len != 11) return error.ExpectedTenArguments;
 
-    const branch = args[1];
-    const commit_sha = args[2];
-    const commit_timestamp = try std.fmt.parseInt(u64, args[3], 10);
-    const target = args[4];
-    const max_input_len = try std.fmt.parseInt(u32, args[5], 10);
-    const fuzz_output_path = args[6];
-    const crash_path = args[7];
-    const hang_path = args[8];
-    const output_path = args[9];
+    const campaign_id = try std.fmt.parseInt(u64, args[1], 10);
+    const requested_ref = args[2];
+    const commit_sha = args[3];
+    const commit_timestamp = try std.fmt.parseInt(u64, args[4], 10);
+    const target = args[5];
+    const max_input_len = try std.fmt.parseInt(u32, args[6], 10);
+    const fuzz_output_path = args[7];
+    const crash_path = args[8];
+    const hang_path = args[9];
+    const output_path = args[10];
 
-    try validateRef(branch);
-    try validateSHA(commit_sha);
-    try validateName(target, 128);
+    if (campaign_id == 0) return error.InvalidCampaignID;
+    try Database.validateRef(requested_ref);
+    try Database.validateSHA(commit_sha);
+    try Database.validateTargetName(target);
     if (commit_timestamp == 0) return error.InvalidCommitTimestamp;
     if (max_input_len == 0) return error.InvalidInputLimit;
 
@@ -38,104 +40,31 @@ pub fn main(init: std.process.Init) !void {
     );
     const stats = try loadStats(arena, init.io, stats_path);
 
-    var results: std.ArrayList(FuzzResult) = .empty;
-    defer results.deinit(gpa);
-
     const hang_failure = try loadShortestFailure(arena, init.io, hang_path, max_input_len);
     const crash_failure = try loadShortestFailure(arena, init.io, crash_path, max_input_len);
-    if ((stats.unique_hangs > 0) != (hang_failure != null)) return error.FailureCountMismatch;
-    if ((stats.unique_crashes > 0) != (crash_failure != null)) return error.FailureCountMismatch;
 
-    if (hang_failure) |failure| {
-        try results.append(gpa, makeResult(.{
-            .branch = branch,
-            .commit_sha = commit_sha,
-            .commit_timestamp = commit_timestamp,
+    const artifact: Database.TargetArtifact = .{
+        .campaign_id = campaign_id,
+        .ref = requested_ref,
+        .commit_sha = commit_sha,
+        .commit_timestamp = commit_timestamp,
+        .result = .{
             .target = target,
-            .stats = stats,
-            .kind = .hang,
-            .encoded_failure = failure,
-        }));
-    }
-    if (crash_failure) |failure| {
-        try results.append(gpa, makeResult(.{
-            .branch = branch,
-            .commit_sha = commit_sha,
-            .commit_timestamp = commit_timestamp,
-            .target = target,
-            .stats = stats,
-            .kind = .crash,
-            .encoded_failure = failure,
-        }));
-    }
-    if (results.items.len == 0) {
-        try results.append(gpa, makeResult(.{
-            .branch = branch,
-            .commit_sha = commit_sha,
-            .commit_timestamp = commit_timestamp,
-            .target = target,
-            .stats = stats,
-            .kind = .success,
-            .encoded_failure = "",
-        }));
-    }
-
-    std.debug.assert(results.items.len > 0);
-    std.debug.assert(results.items.len <= 2);
-    std.mem.sort(FuzzResult, results.items, {}, FuzzResult.lessThan);
-    try writeJSON(init.io, output_path, results.items);
-}
-
-const MakeResultOptions = struct {
-    branch: []const u8,
-    commit_sha: []const u8,
-    commit_timestamp: u64,
-    target: []const u8,
-    stats: FuzzerStats,
-    kind: FuzzResult.Kind,
-    encoded_failure: []const u8,
-};
-
-fn makeResult(options: MakeResultOptions) FuzzResult {
-    return .{
-        .branch = options.branch,
-        .commit_sha = options.commit_sha,
-        .commit_timestamp = options.commit_timestamp,
-        .start_timestamp = options.stats.start_timestamp,
-        .target = options.target,
-        .edges_found = options.stats.edges_found,
-        .total_edges = options.stats.total_edges,
-        .unique_crashes = options.stats.unique_crashes,
-        .unique_hangs = options.stats.unique_hangs,
-        .total_execs = options.stats.total_execs,
-        .kind = options.kind,
-        .encoded_failure = options.encoded_failure,
+            .start_timestamp = stats.start_timestamp,
+            .run_time_seconds = stats.run_time_seconds,
+            .edges_found = stats.edges_found,
+            .total_edges = stats.total_edges,
+            .corpus_count = stats.corpus_count,
+            .corpus_found = stats.corpus_found,
+            .unique_crashes = stats.unique_crashes,
+            .unique_hangs = stats.unique_hangs,
+            .total_execs = stats.total_execs,
+            .encoded_crash = crash_failure,
+            .encoded_hang = hang_failure,
+        },
     };
-}
-
-fn validateRef(value: []const u8) !void {
-    if (value.len == 0) return error.EmptyRef;
-    if (value.len > 256) return error.RefTooLong;
-    for (value) |byte| {
-        if (std.ascii.isControl(byte)) return error.InvalidRef;
-    }
-}
-
-fn validateName(value: []const u8, len_max: u16) !void {
-    if (value.len == 0) return error.EmptyName;
-    if (value.len > len_max) return error.NameTooLong;
-    for (value) |byte| {
-        const allowed = std.ascii.isAlphanumeric(byte) or
-            byte == '-' or byte == '_' or byte == '/' or byte == '.';
-        if (!allowed) return error.InvalidName;
-    }
-}
-
-fn validateSHA(commit_sha: []const u8) !void {
-    if (commit_sha.len != 40) return error.InvalidCommitSHA;
-    for (commit_sha) |byte| {
-        if (!std.ascii.isHex(byte)) return error.InvalidCommitSHA;
-    }
+    try Database.validateTargetResult(arena, artifact.result, max_input_len);
+    try writeJSON(gpa, init.io, output_path, artifact);
 }
 
 fn loadStats(arena: std.mem.Allocator, io: std.Io, path: []const u8) !FuzzerStats {
@@ -162,6 +91,10 @@ fn loadStats(arena: std.mem.Allocator, io: std.Io, path: []const u8) !FuzzerStat
             if (seen.start_timestamp) return error.DuplicateStatsField;
             seen.start_timestamp = true;
             stats.start_timestamp = try std.fmt.parseInt(u64, value, 10);
+        } else if (std.mem.eql(u8, key, "run_time")) {
+            if (seen.run_time_seconds) return error.DuplicateStatsField;
+            seen.run_time_seconds = true;
+            stats.run_time_seconds = try std.fmt.parseInt(u64, value, 10);
         } else if (std.mem.eql(u8, key, "execs_done")) {
             if (seen.total_execs) return error.DuplicateStatsField;
             seen.total_execs = true;
@@ -174,6 +107,14 @@ fn loadStats(arena: std.mem.Allocator, io: std.Io, path: []const u8) !FuzzerStat
             if (seen.total_edges) return error.DuplicateStatsField;
             seen.total_edges = true;
             stats.total_edges = try std.fmt.parseInt(u64, value, 10);
+        } else if (std.mem.eql(u8, key, "corpus_count")) {
+            if (seen.corpus_count) return error.DuplicateStatsField;
+            seen.corpus_count = true;
+            stats.corpus_count = try std.fmt.parseInt(u64, value, 10);
+        } else if (std.mem.eql(u8, key, "corpus_found")) {
+            if (seen.corpus_found) return error.DuplicateStatsField;
+            seen.corpus_found = true;
+            stats.corpus_found = try std.fmt.parseInt(u64, value, 10);
         } else if (std.mem.eql(u8, key, "saved_crashes")) {
             if (seen.unique_crashes) return error.DuplicateStatsField;
             seen.unique_crashes = true;
@@ -186,9 +127,6 @@ fn loadStats(arena: std.mem.Allocator, io: std.Io, path: []const u8) !FuzzerStat
     }
 
     if (!seen.all()) return error.MissingStatsField;
-    if (stats.start_timestamp == 0) return error.InvalidStartTimestamp;
-    if (stats.total_execs == 0) return error.NoExecutions;
-    if (stats.edges_found > stats.total_edges) return error.InvalidEdgeCounts;
     return stats;
 }
 
@@ -236,7 +174,20 @@ fn loadShortestFailure(
     return std.base64.standard.Encoder.encode(encoded, content);
 }
 
-fn writeJSON(io: std.Io, path: []const u8, results: []const FuzzResult) !void {
+fn writeJSON(
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    path: []const u8,
+    artifact: Database.TargetArtifact,
+) !void {
+    const output = try gpa.alloc(u8, Database.artifact_size_max);
+    defer gpa.free(output);
+
+    var output_writer = std.Io.Writer.fixed(output);
+    output_writer.print("{f}\n", .{
+        std.json.fmt(artifact, .{ .whitespace = .indent_2 }),
+    }) catch return error.ResultArtifactTooLarge;
+
     var atomic_file = try std.Io.Dir.cwd().createFileAtomic(io, path, .{
         .replace = true,
     });
@@ -244,17 +195,18 @@ fn writeJSON(io: std.Io, path: []const u8, results: []const FuzzResult) !void {
 
     var buffer: [4096]u8 = undefined;
     var writer = atomic_file.file.writer(io, &buffer);
-    try writer.interface.print("{f}\n", .{
-        std.json.fmt(results, .{ .whitespace = .indent_2 }),
-    });
+    try writer.interface.writeAll(output_writer.buffered());
     try writer.interface.flush();
     try atomic_file.replace(io);
 }
 
 const FuzzerStats = struct {
     start_timestamp: u64 = 0,
+    run_time_seconds: u64 = 0,
     edges_found: u64 = 0,
     total_edges: u64 = 0,
+    corpus_count: u64 = 0,
+    corpus_found: u64 = 0,
     unique_crashes: u64 = 0,
     unique_hangs: u64 = 0,
     total_execs: u64 = 0,
@@ -262,14 +214,18 @@ const FuzzerStats = struct {
 
 const SeenStats = struct {
     start_timestamp: bool = false,
+    run_time_seconds: bool = false,
     edges_found: bool = false,
     total_edges: bool = false,
+    corpus_count: bool = false,
+    corpus_found: bool = false,
     unique_crashes: bool = false,
     unique_hangs: bool = false,
     total_execs: bool = false,
 
     fn all(self: @This()) bool {
-        return self.start_timestamp and self.edges_found and self.total_edges and
+        return self.start_timestamp and self.run_time_seconds and
+            self.edges_found and self.total_edges and self.corpus_count and self.corpus_found and
             self.unique_crashes and self.unique_hangs and self.total_execs;
     }
 };

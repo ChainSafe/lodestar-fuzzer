@@ -328,6 +328,7 @@ jobs:
 
           cd lodestar-fuzzer
           zig build collect-result -- \
+            "$GITHUB_RUN_ID" \
             "$LODESTAR_Z_REF" \
             "$COMMIT_SHA" \
             "$COMMIT_TIMESTAMP" \
@@ -346,6 +347,7 @@ jobs:
           name: result-${{ env.COMMIT_SHA }}-${{ env.TARGET }}
           path: ${{ runner.temp }}/lodestar-fuzzer-result/result.json
           if-no-files-found: error
+          overwrite: true
           retention-days: 30
 
   aggregate:
@@ -356,9 +358,16 @@ jobs:
       actions: read
       contents: write
     steps:
-      - name: Checkout controller
+      - name: Checkout controller tools
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          path: controller-tools
+          ref: ${{ github.sha }}
+
+      - name: Checkout controller data
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          path: controller-data
           ref: main
 
       - name: Checkout tested Lodestar-Z revision
@@ -380,6 +389,9 @@ jobs:
           pattern: result-${{ needs.discover.outputs.commit_sha }}-*
           path: ${{ runner.temp }}/lodestar-fuzzer-results
 
+      - name: Build controller tools
+        run: cd controller-tools && zig build
+
       - name: Merge database and generate site
         shell: bash
         run: |
@@ -389,17 +401,22 @@ jobs:
           zig build fuzz-metadata
           cd ../../../
 
-          zig build merge-results -- \
+          "$GITHUB_WORKSPACE/controller-tools/zig-out/bin/merge-results" \
+            "$GITHUB_RUN_ID" \
+            "$LODESTAR_Z_REF" \
             "${{ needs.discover.outputs.commit_sha }}" \
-            "lodestar-z/test/fuzz/zig-out/share/lodestar-z-fuzz/targets.json" \
+            "${{ needs.discover.outputs.commit_timestamp }}" \
+            "$GITHUB_WORKSPACE/lodestar-z/test/fuzz/zig-out/share/lodestar-z-fuzz/targets.json" \
             "$RUNNER_TEMP/lodestar-fuzzer-results" \
-            data.json
-          zig build generate-website
+            "$GITHUB_WORKSPACE/controller-data/data.json"
+          cd controller-data
+          ../controller-tools/zig-out/bin/generate-website
 
       - name: Record database
         shell: bash
         run: |
           set -euo pipefail
+          cd controller-data
           if git diff --quiet -- data.json; then
             exit 0
           fi
@@ -412,7 +429,7 @@ jobs:
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
-          path: www
+          path: controller-data/www
 
   deploy:
     needs: aggregate

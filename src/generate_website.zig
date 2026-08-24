@@ -1,7 +1,5 @@
 const std = @import("std");
-const FuzzResult = @import("FuzzResult.zig");
-
-const result_limit: u8 = 20;
+const Database = @import("Database.zig");
 
 pub fn main(init: std.process.Init) !void {
     var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
@@ -19,15 +17,10 @@ pub fn main(init: std.process.Init) !void {
         init.io,
         "data.json",
         arena,
-        .limited(32 * 1024 * 1024),
+        .limited(Database.database_size_max + 1),
     );
-    const results = try std.json.parseFromSliceLeaky(
-        []FuzzResult,
-        arena,
-        content,
-        .{ .ignore_unknown_fields = false },
-    );
-    if (results.len > result_limit) return error.DatabaseExceedsResultLimit;
+    if (content.len > Database.database_size_max) return error.DatabaseTooLarge;
+    const parsed_database = try Database.parse(arena, content);
 
     std.Io.Dir.cwd().createDir(init.io, "www", .default_dir) catch |err| {
         if (err != error.PathAlreadyExists) return err;
@@ -46,11 +39,15 @@ pub fn main(init: std.process.Init) !void {
     var file_writer = atomic_file.file.writer(init.io, &buffer);
     const writer = &file_writer.interface;
     try writeHeader(writer);
-    try writeResults(writer, results);
+    switch (parsed_database) {
+        .legacy => try writeLegacyNotice(writer),
+        .current => |database| try writeDatabase(writer, database, arena),
+    }
     try writer.writeAll(
-        \\    </tbody>
-        \\  </table>
-        \\  <p class="foot">The database retains the 20 highest-priority recent results.</p>
+        \\  <p class="foot">
+        \\    The database retains the latest three complete campaigns. Re-running the same
+        \\    GitHub Actions run replaces that campaign.
+        \\  </p>
         \\</main>
         \\</body>
         \\</html>
@@ -73,79 +70,168 @@ fn writeHeader(writer: *std.Io.Writer) !void {
         \\    body { margin: 0; }
         \\    main { margin: 0 auto; max-width: 110rem; padding: 2rem; }
         \\    h1 { margin-top: 0; }
+        \\    section { margin: 2rem 0 3rem; }
         \\    table { border-collapse: collapse; width: 100%; }
         \\    th, td { border-bottom: 1px solid #8888; padding: .65rem; text-align: left; }
         \\    th { position: sticky; top: 0; background: Canvas; }
         \\    code { overflow-wrap: anywhere; }
-        \\    .success { color: #167a35; font-weight: 700; }
-        \\    .crash, .hang { color: #b3261e; font-weight: 700; }
-        \\    .foot { color: GrayText; }
-        \\    @media (max-width: 60rem) { main { padding: 1rem; } table { display: block; overflow: auto; } }
+        \\    .failure { color: #b3261e; font-weight: 700; }
+        \\    .foot, .summary { color: GrayText; }
+        \\    @media (max-width: 60rem) {
+        \\      main { padding: 1rem; }
+        \\      table { display: block; overflow: auto; }
+        \\    }
         \\  </style>
         \\</head>
         \\<body>
         \\<main>
         \\  <h1>Lodestar-Z fuzz results</h1>
-        \\  <p><a href="https://github.com/ChainSafe/lodestar-fuzzer/blob/main/data.json">Raw data</a></p>
+        \\  <p><a href="https://github.com/ChainSafe/lodestar-fuzzer/blob/main/data.json">
+        \\    Raw data
+        \\  </a></p>
         \\  <p class="foot">
         \\    <a href="https://aflplus.plus/docs/afl-fuzz_approach/">AFL map edges</a>
-        \\    are coverage-map slots reached in each instrumented target binary,
-        \\    not source line or function coverage. Compare them only between runs of the same
-        \\    target and instrumentation.
+        \\    are coverage-map slots reached in each instrumented target binary, not source line
+        \\    or function coverage. Queue entries are inputs that produced interesting coverage.
         \\  </p>
-        \\  <table>
-        \\    <thead>
-        \\      <tr>
-        \\        <th>Commit</th><th>Ref</th><th>Target</th><th>Result</th>
-        \\        <th>Run start</th><th>AFL map edges</th><th>Executions</th>
-        \\        <th>Failure input</th>
-        \\      </tr>
-        \\    </thead>
-        \\    <tbody>
         \\
     );
 }
 
-fn writeResults(writer: *std.Io.Writer, results: []const FuzzResult) !void {
-    for (results) |result| {
-        try writer.writeAll("      <tr><td><a href=\"");
-        try writer.writeAll("https://github.com/ChainSafe/lodestar-z/commit/");
-        try writeEscaped(writer, result.commit_sha);
-        try writer.writeAll("\"><code>");
-        try writeEscaped(writer, result.commit_sha[0..12]);
-        try writer.writeAll("</code></a><br><small>");
-        try writer.print("{d}", .{result.commit_timestamp});
-        try writer.writeAll("</small></td><td>");
-        try writeEscaped(writer, result.branch);
-        try writer.writeAll("</td><td><code>");
-        try writeEscaped(writer, result.target);
-        try writer.writeAll("</code></td><td class=\"");
-        try writer.writeAll(@tagName(result.kind));
-        try writer.writeAll("\">");
-        try writer.writeAll(@tagName(result.kind));
-        try writer.print("<br><small>{d} crashes, {d} hangs</small>", .{
+fn writeLegacyNotice(writer: *std.Io.Writer) !void {
+    try writer.writeAll(
+        \\  <section>
+        \\    <h2>Legacy results</h2>
+        \\    <p>The existing rows predate campaign IDs and cannot be grouped reliably. The next
+        \\      completed campaign will migrate the database to campaign-aware history.</p>
+        \\  </section>
+        \\
+    );
+}
+
+fn writeDatabase(
+    writer: *std.Io.Writer,
+    database: Database,
+    arena: std.mem.Allocator,
+) !void {
+    try database.validate(arena);
+
+    if (database.campaigns.len == 0) {
+        try writer.writeAll("  <p>No campaigns recorded.</p>\n");
+        return;
+    }
+
+    for (database.campaigns) |campaign| {
+        try writeCampaign(writer, campaign);
+    }
+}
+
+fn writeCampaign(writer: *std.Io.Writer, campaign: Database.Campaign) !void {
+    var total_execs: u64 = 0;
+    var total_runtime_seconds: u64 = 0;
+    var total_corpus_found: u64 = 0;
+    var total_crashes: u64 = 0;
+    var total_hangs: u64 = 0;
+    for (campaign.results) |result| {
+        total_execs = std.math.add(u64, total_execs, result.total_execs) catch {
+            return error.MetricOverflow;
+        };
+        total_runtime_seconds = std.math.add(
+            u64,
+            total_runtime_seconds,
+            result.run_time_seconds,
+        ) catch return error.MetricOverflow;
+        total_corpus_found = std.math.add(u64, total_corpus_found, result.corpus_found) catch {
+            return error.MetricOverflow;
+        };
+        total_crashes = std.math.add(u64, total_crashes, result.unique_crashes) catch {
+            return error.MetricOverflow;
+        };
+        total_hangs = std.math.add(u64, total_hangs, result.unique_hangs) catch {
+            return error.MetricOverflow;
+        };
+    }
+
+    try writer.writeAll("  <section>\n    <h2>Campaign <a href=\"");
+    try writer.writeAll("https://github.com/ChainSafe/lodestar-fuzzer/actions/runs/");
+    try writer.print("{d}\">#{d}</a></h2>\n    <p><code>", .{
+        campaign.campaign_id,
+        campaign.campaign_id,
+    });
+    try writeEscaped(writer, campaign.ref);
+    try writer.writeAll("</code> · <a href=\"");
+    try writer.writeAll("https://github.com/ChainSafe/lodestar-z/commit/");
+    try writeEscaped(writer, campaign.commit_sha);
+    try writer.writeAll("\"><code>");
+    try writeEscaped(writer, campaign.commit_sha[0..12]);
+    try writer.writeAll("</code></a></p>\n");
+    try writer.print(
+        "    <p class=\"summary\">{d} targets · {d} new queue entries · " ++
+            "{d} executions · {d}h {d}m target time · {d} crashes · {d} hangs</p>\n",
+        .{
+            campaign.results.len,
+            total_corpus_found,
+            total_execs,
+            total_runtime_seconds / 3600,
+            total_runtime_seconds % 3600 / 60,
+            total_crashes,
+            total_hangs,
+        },
+    );
+    try writer.writeAll(
+        \\    <table>
+        \\      <thead>
+        \\        <tr>
+        \\          <th>Target</th><th>Failures</th><th>Queue</th>
+        \\          <th>AFL map edges</th><th>Work</th>
+        \\        </tr>
+        \\      </thead>
+        \\      <tbody>
+        \\
+    );
+    for (campaign.results) |result| try writeResult(writer, result);
+    try writer.writeAll("      </tbody>\n    </table>\n  </section>\n");
+}
+
+fn writeResult(writer: *std.Io.Writer, result: Database.TargetResult) !void {
+    const failed = result.unique_crashes > 0 or result.unique_hangs > 0;
+    try writer.writeAll("        <tr><td><code>");
+    try writeEscaped(writer, result.target);
+    try writer.writeAll("</code></td><td class=\"");
+    if (failed) try writer.writeAll("failure");
+    try writer.writeAll("\">");
+    if (failed) {
+        try writer.print("{d} crashes<br><small>{d} hangs</small>", .{
             result.unique_crashes,
             result.unique_hangs,
         });
-        try writer.print(
-            "</td><td>{d}</td><td>{d} found<br>" ++
-                "<small>{d} instrumented</small></td><td>{d}</td><td>",
-            .{
-                result.start_timestamp,
-                result.edges_found,
-                result.total_edges,
-                result.total_execs,
-            },
-        );
-        if (result.kind == .success) {
-            try writer.writeAll("None");
-        } else {
-            try writer.writeAll("<details><summary>base64</summary><code>");
-            try writeEscaped(writer, result.encoded_failure);
-            try writer.writeAll("</code></details>");
-        }
-        try writer.writeAll("</td></tr>\n");
+        try writeFailure(writer, "crash", result.encoded_crash);
+        try writeFailure(writer, "hang", result.encoded_hang);
+    } else {
+        try writer.writeAll("None");
     }
+    try writer.print(
+        "</td><td>{d} new<br><small>{d} at exit</small></td><td>{d}</td>" ++
+            "<td>{d} executions<br><small>{d}/s · {d}s</small></td>",
+        .{
+            result.corpus_found,
+            result.corpus_count,
+            result.edges_found,
+            result.total_execs,
+            result.total_execs / result.run_time_seconds,
+            result.run_time_seconds,
+        },
+    );
+    try writer.writeAll("</tr>\n");
+}
+
+fn writeFailure(writer: *std.Io.Writer, kind: []const u8, encoded: ?[]const u8) !void {
+    const content = encoded orelse return;
+    try writer.writeAll("<details><summary>");
+    try writer.writeAll(kind);
+    try writer.writeAll(" base64</summary><code>");
+    try writeEscaped(writer, content);
+    try writer.writeAll("</code></details>");
 }
 
 fn writeEscaped(writer: *std.Io.Writer, value: []const u8) !void {
