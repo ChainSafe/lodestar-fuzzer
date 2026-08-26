@@ -12,8 +12,9 @@ worker per target.
 
 ## Workflow
 
-Scheduled runs use Lodestar-Z `main` for 7,200 seconds. A manual run accepts a Lodestar-Z branch,
-tag, or commit and a per-target duration. The hosted discovery job checks out that ref once, runs:
+Scheduled runs start every six hours and use Lodestar-Z `main` for 7,200 seconds. A manual run accepts
+a Lodestar-Z branch, tag, or commit and a per-target duration. The hosted discovery job checks out
+that ref once, runs:
 
 ```sh
 cd lodestar-z/test/fuzz
@@ -33,11 +34,12 @@ Each matrix item starts one finite `afl-fuzz` process in explore mode. The targe
 `max_input_len` is passed through `-G`; AFL++ writes the single-worker state under `default/`.
 Campaign jobs upload results but never modify Git.
 
-The final hosted aggregation job requires exactly one artifact for every discovered target. The Zig
-merger rejects missing, duplicate, unexpected, or campaign-mismatched results, retains the latest
-three complete campaigns in `data.json`, generates `www/index.html`, and performs at most one commit
-and push. Re-running the same GitHub Actions run replaces that campaign. A separate hosted job
-publishes the generated site through GitHub Pages.
+The final hosted aggregation job requires exactly one artifact for every discovered target. Each
+artifact contains `result.json` and every crash or hang retained by AFL++. The Zig merger rejects
+missing, duplicate, unexpected, or campaign-mismatched results, retains the latest three complete
+campaigns in `data.json`, generates `www/index.html`, and performs at most one commit and push.
+Re-running the same GitHub Actions run replaces that campaign. A separate hosted job publishes the
+generated site through GitHub Pages.
 
 ## Runner contract
 
@@ -52,26 +54,49 @@ The host must already provide Zig 0.16.0, LLVM 18, and AFL++ 5.02c. Set the repo
 reads `/proc/sys/kernel/core_pattern`; it does not install packages, run `sudo`, or provision the
 runner. A piped `core_pattern` fails the preflight.
 
+All agents with the `lodestar-fuzz` label must run on the same physical host and share one
+`STATE_ROOT`. Registering that label on another host would split the persistent corpus. Multiple
+physical hosts require shared storage or distinct labels that bind each project to one host.
+
 Set the repository variable `STATE_ROOT` to relocate persistent state from
 `/var/lib/lodestar-fuzzer`. Each target owns:
 
 ```text
 $STATE_ROOT/
-├── corpus/<target>/
-│   ├── current -> versions/<generation>
-│   └── versions/<generation>/
-└── staging/<target>/<run-id>/
+└── projects/<project>/
+    ├── corpus/<target>/v<corpus-version>/
+    │   ├── current -> versions/<generation>
+    │   └── versions/<generation>/
+    ├── failures/<target>/v<corpus-version>/<generation>/
+    │   ├── result.json
+    │   ├── crashes/
+    │   └── hangs/
+    └── staging/<target>/v<corpus-version>/<generation>/
 ```
 
-The job overlays current inputs with `corpus/<target>-cmin`, runs AFL++, and minimizes the new
-`default/queue` with `afl-cmin`. If cmin fails, the unminimized queue is the only fallback. Before
-publication, every candidate must be a nonempty flat directory of regular inputs within the target
-limit and must pass `zig-out/bin/repro-<target>` as a directory replay.
+The project, target, and target-published corpus version form the persistent corpus identity. A
+campaign for the canonical `main` ref may update `current`. Other refs may use `current` as input but
+cannot publish over it. The job overlays current inputs with `corpus/<target>-cmin`, runs AFL++, and
+minimizes the new `default/queue` with `afl-cmin`. A cmin failure stops publication and propagates its
+original error, leaving the previous `current` corpus unchanged. Before publication, every candidate
+must be a nonempty flat directory of regular inputs within the target limit and must pass
+`zig-out/bin/repro-<target>` as a directory replay.
 
 Publication renames the candidate to a new immutable version, creates a `current.next` symlink, and
 atomically renames the symlink over `current`. The live version is never changed in place. Cleanup
 retains the new current version and its immediate predecessor and only removes resolved paths below
 that target's private version and staging directories.
+
+Every AFL crash and hang is copied unchanged. A campaign with failures moves those inputs into the
+runner's persistent `failures` directory before result validation, then uploads that directory as the
+target artifact. GitHub retains the downloadable artifact for 30 days; the runner copy is the durable
+source until failure storage moves to S3. Campaigns without failures leave no persistent failure
+directory. The collector enforces AFL++ 5.02c's limits of 25,600 unique crashes and 512 unique hangs
+per target run.
+
+The namespaced layout intentionally rejects the former `$STATE_ROOT/corpus/<target>` layout. Before
+deploying this workflow, move each existing target directory to
+`$STATE_ROOT/projects/lodestar-z/corpus/<target>/v1`.
 
 ## Zig tools
 
@@ -79,18 +104,18 @@ Zig 0.16.0 builds all tools:
 
 ```sh
 zig build
-zig build collect-result -- <campaign-id> <ref> <sha> <commit-time> <target> <max-input> \
-  <afl-output> <crashes> <hangs> <result.json>
-zig build merge-results -- <campaign-id> <ref> <sha> <commit-time> <targets.json> \
-  <artifact-directory> <data.json>
+zig build collect-result -- <project> <repository> <campaign-id> <ref> <sha> <commit-time> \
+  <target> <corpus-version> <max-input> <afl-output> <crashes> <hangs> <result.json>
+zig build merge-results -- <project> <repository> <campaign-id> <ref> <sha> <commit-time> \
+  <targets.json> <artifact-directory> <data.json>
 zig build generate-website
 ```
 
-The versioned result database groups every target from one GitHub Actions run under its campaign ID.
-Each target records run time, execution count, exit queue size, locally discovered queue entries,
-AFL map edges, crash and hang counts, and at most one minimized sample of each failure kind. The
-per-target artifact is limited to 4 MiB. The database is limited to 32 MiB and updates atomically,
-so an oversized result fails without replacing the previous database.
+The versioned result database identifies each campaign by project, repository, and GitHub Actions run.
+Each target records its corpus version, run time, execution count, exit queue size, locally discovered
+queue entries, AFL map edges, crash and hang counts, and at most one raw sample of each failure kind.
+Each `result.json` is limited to 4 MiB. The database is limited to 32 MiB and updates atomically, so
+an oversized result fails without replacing the previous database.
 
 The merger accepts the original flat result array only as a one-time legacy input. The first
 campaign-aware update replaces those rows because their campaign membership cannot be recovered

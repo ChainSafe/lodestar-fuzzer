@@ -152,7 +152,9 @@ fn writeCampaign(writer: *std.Io.Writer, campaign: Database.Campaign) !void {
         };
     }
 
-    try writer.writeAll("  <section>\n    <h2>Campaign <a href=\"");
+    try writer.writeAll("  <section>\n    <h2>");
+    try writeEscaped(writer, campaign.project_id);
+    try writer.writeAll(" campaign <a href=\"");
     try writer.writeAll("https://github.com/ChainSafe/lodestar-fuzzer/actions/runs/");
     try writer.print("{d}\">#{d}</a></h2>\n    <p><code>", .{
         campaign.campaign_id,
@@ -160,7 +162,9 @@ fn writeCampaign(writer: *std.Io.Writer, campaign: Database.Campaign) !void {
     });
     try writeEscaped(writer, campaign.ref);
     try writer.writeAll("</code> · <a href=\"");
-    try writer.writeAll("https://github.com/ChainSafe/lodestar-z/commit/");
+    try writer.writeAll("https://github.com/");
+    try writeEscaped(writer, campaign.repository);
+    try writer.writeAll("/commit/");
     try writeEscaped(writer, campaign.commit_sha);
     try writer.writeAll("\"><code>");
     try writeEscaped(writer, campaign.commit_sha[0..12]);
@@ -197,7 +201,9 @@ fn writeResult(writer: *std.Io.Writer, result: Database.TargetResult) !void {
     const failed = result.unique_crashes > 0 or result.unique_hangs > 0;
     try writer.writeAll("        <tr><td><code>");
     try writeEscaped(writer, result.target);
-    try writer.writeAll("</code></td><td class=\"");
+    try writer.print("</code><br><small>corpus v{d}</small></td><td class=\"", .{
+        result.corpus_version,
+    });
     if (failed) try writer.writeAll("failure");
     try writer.writeAll("\">");
     if (failed) {

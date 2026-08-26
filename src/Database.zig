@@ -1,9 +1,12 @@
 const std = @import("std");
 const Database = @This();
 
-pub const schema_version_current: u16 = 1;
+pub const schema_version_current: u16 = 2;
+pub const schema_version_previous: u16 = 1;
 pub const campaign_limit: u8 = 3;
 pub const target_count_max: u8 = 128;
+pub const crash_count_max: u32 = 25_600;
+pub const hang_count_max: u32 = 512;
 pub const artifact_size_max: usize = 4 * 1024 * 1024;
 pub const database_size_max: usize = 32 * 1024 * 1024;
 
@@ -11,6 +14,8 @@ schema_version: u16,
 campaigns: []const Campaign,
 
 pub const Campaign = struct {
+    project_id: []const u8 = "lodestar-z",
+    repository: []const u8 = "ChainSafe/lodestar-z",
     campaign_id: u64,
     ref: []const u8,
     commit_sha: []const u8,
@@ -21,6 +26,7 @@ pub const Campaign = struct {
 
 pub const TargetResult = struct {
     target: []const u8,
+    corpus_version: u32 = 1,
     start_timestamp: u64,
     run_time_seconds: u64,
     edges_found: u64,
@@ -35,6 +41,8 @@ pub const TargetResult = struct {
 };
 
 pub const TargetArtifact = struct {
+    project_id: []const u8,
+    repository: []const u8,
     campaign_id: u64,
     ref: []const u8,
     commit_sha: []const u8,
@@ -69,13 +77,17 @@ pub fn parse(arena: std.mem.Allocator, content: []const u8) !Parsed {
 }
 
 pub fn validate(database: Database, arena: std.mem.Allocator) !void {
-    if (database.schema_version != schema_version_current) {
+    if (database.schema_version != schema_version_current and
+        database.schema_version != schema_version_previous)
+    {
         return error.UnsupportedDatabaseSchema;
     }
     if (database.campaigns.len > campaign_limit) return error.DatabaseExceedsCampaignLimit;
 
     for (database.campaigns, 0..) |campaign, campaign_index| {
         if (campaign.campaign_id == 0) return error.InvalidCampaignID;
+        try validateProjectID(campaign.project_id);
+        try validateRepository(campaign.repository);
         try validateRef(campaign.ref);
         try validateSHA(campaign.commit_sha);
         if (campaign.commit_timestamp == 0) return error.InvalidCommitTimestamp;
@@ -111,12 +123,15 @@ pub fn validateTargetResult(
     max_input_len: ?u32,
 ) !void {
     if (result.start_timestamp == 0) return error.InvalidStartTimestamp;
+    if (result.corpus_version == 0) return error.InvalidCorpusVersion;
     if (result.run_time_seconds == 0) return error.InvalidRunTime;
     if (result.total_edges == 0) return error.EmptyInstrumentationMap;
     if (result.edges_found > result.total_edges) return error.InvalidEdgeCounts;
     if (result.corpus_count == 0) return error.EmptyCorpus;
     if (result.corpus_found > result.corpus_count) return error.InvalidCorpusCounts;
     if (result.total_execs == 0) return error.NoExecutions;
+    if (result.unique_crashes > crash_count_max) return error.TooManyCrashes;
+    if (result.unique_hangs > hang_count_max) return error.TooManyHangs;
     if ((result.unique_crashes > 0) != (result.encoded_crash != null)) {
         return error.FailureCountMismatch;
     }
@@ -133,6 +148,32 @@ pub fn validateRef(value: []const u8) !void {
     for (value) |byte| {
         if (std.ascii.isControl(byte)) return error.InvalidRef;
     }
+}
+
+pub fn validateProjectID(value: []const u8) !void {
+    if (value.len == 0) return error.EmptyProjectID;
+    if (value.len > 128) return error.ProjectIDTooLong;
+    for (value) |byte| {
+        const allowed = std.ascii.isLower(byte) or std.ascii.isDigit(byte) or byte == '-';
+        if (!allowed) return error.InvalidProjectID;
+    }
+}
+
+pub fn validateRepository(value: []const u8) !void {
+    if (value.len == 0) return error.EmptyRepository;
+    if (value.len > 256) return error.RepositoryTooLong;
+
+    var slash_count: u16 = 0;
+    for (value) |byte| {
+        if (byte == '/') {
+            slash_count += 1;
+            continue;
+        }
+        const allowed = std.ascii.isAlphanumeric(byte) or byte == '_' or byte == '-' or byte == '.';
+        if (!allowed) return error.InvalidRepository;
+    }
+    if (slash_count != 1) return error.InvalidRepository;
+    if (value[0] == '/' or value[value.len - 1] == '/') return error.InvalidRepository;
 }
 
 pub fn validateSHA(commit_sha: []const u8) !void {

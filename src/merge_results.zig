@@ -13,16 +13,20 @@ pub fn main(init: std.process.Init) !void {
     const arena = arena_state.allocator();
 
     const args = try init.minimal.args.toSlice(arena);
-    if (args.len != 8) return error.ExpectedSevenArguments;
+    if (args.len != 10) return error.ExpectedNineArguments;
 
-    const campaign_id = try std.fmt.parseInt(u64, args[1], 10);
-    const expected_ref = args[2];
-    const expected_sha = args[3];
-    const expected_commit_timestamp = try std.fmt.parseInt(u64, args[4], 10);
-    const targets_path = args[5];
-    const results_path = args[6];
-    const database_path = args[7];
+    const project_id = args[1];
+    const repository = args[2];
+    const campaign_id = try std.fmt.parseInt(u64, args[3], 10);
+    const expected_ref = args[4];
+    const expected_sha = args[5];
+    const expected_commit_timestamp = try std.fmt.parseInt(u64, args[6], 10);
+    const targets_path = args[7];
+    const results_path = args[8];
+    const database_path = args[9];
     if (campaign_id == 0) return error.InvalidCampaignID;
+    try Database.validateProjectID(project_id);
+    try Database.validateRepository(repository);
     try Database.validateRef(expected_ref);
     try Database.validateSHA(expected_sha);
     if (expected_commit_timestamp == 0) return error.InvalidCommitTimestamp;
@@ -43,6 +47,8 @@ pub fn main(init: std.process.Init) !void {
 
     const new_results = try loadMatrixResults(arena, init.io, .{
         .campaign_id = campaign_id,
+        .project_id = project_id,
+        .repository = repository,
         .expected_ref = expected_ref,
         .expected_sha = expected_sha,
         .expected_commit_timestamp = expected_commit_timestamp,
@@ -50,6 +56,8 @@ pub fn main(init: std.process.Init) !void {
         .results_path = results_path,
     });
     const new_campaign: Database.Campaign = .{
+        .project_id = project_id,
+        .repository = repository,
         .campaign_id = campaign_id,
         .ref = expected_ref,
         .commit_sha = expected_sha,
@@ -96,6 +104,8 @@ pub fn main(init: std.process.Init) !void {
 }
 
 const LoadMatrixOptions = struct {
+    project_id: []const u8,
+    repository: []const u8,
     campaign_id: u64,
     expected_ref: []const u8,
     expected_sha: []const u8,
@@ -122,8 +132,8 @@ fn loadMatrixResults(
 
     const artifact_prefix = try std.fmt.allocPrint(
         arena,
-        "result-{s}-",
-        .{options.expected_sha},
+        "result-{s}-{s}-",
+        .{ options.project_id, options.expected_sha },
     );
     var artifact_count: u16 = 0;
     var iterator = results_directory.iterate();
@@ -168,6 +178,22 @@ fn loadMatrixResults(
             options.manifest.include[target_index],
             artifact,
         );
+        try validateFailureDirectory(
+            io,
+            artifact_directory,
+            "crashes",
+            artifact.result.unique_crashes,
+            options.manifest.include[target_index].max_input_len,
+            Database.crash_count_max,
+        );
+        try validateFailureDirectory(
+            io,
+            artifact_directory,
+            "hangs",
+            artifact.result.unique_hangs,
+            options.manifest.include[target_index].max_input_len,
+            Database.hang_count_max,
+        );
 
         results[target_index] = artifact.result;
         found[target_index] = true;
@@ -185,17 +211,60 @@ fn loadMatrixResults(
 fn validateArtifactDirectory(io: std.Io, directory: std.Io.Dir) !void {
     var entry_count: u8 = 0;
     var found_result = false;
+    var found_crashes = false;
+    var found_hangs = false;
     var iterator = directory.iterate();
     while (try iterator.next(io)) |entry| {
         entry_count += 1;
-        if (entry_count > 1) return error.UnexpectedResultArtifactFile;
-        if (entry.kind != .file) return error.UnexpectedResultArtifactFile;
-        if (!std.mem.eql(u8, entry.name, "result.json")) {
+        if (entry_count > 3) return error.UnexpectedResultArtifactFile;
+        if (std.mem.eql(u8, entry.name, "result.json")) {
+            if (entry.kind != .file or found_result) return error.UnexpectedResultArtifactFile;
+            found_result = true;
+        } else if (std.mem.eql(u8, entry.name, "crashes")) {
+            if (entry.kind != .directory or found_crashes) {
+                return error.UnexpectedResultArtifactFile;
+            }
+            found_crashes = true;
+        } else if (std.mem.eql(u8, entry.name, "hangs")) {
+            if (entry.kind != .directory or found_hangs) {
+                return error.UnexpectedResultArtifactFile;
+            }
+            found_hangs = true;
+        } else {
             return error.UnexpectedResultArtifactFile;
         }
-        found_result = true;
     }
     if (!found_result) return error.MissingResultJSON;
+}
+
+fn validateFailureDirectory(
+    io: std.Io,
+    artifact_directory: std.Io.Dir,
+    name: []const u8,
+    expected_count: u64,
+    max_input_len: u32,
+    entry_count_max: u32,
+) !void {
+    if (expected_count > entry_count_max) return error.TooManyFailureEntries;
+
+    var directory = artifact_directory.openDir(io, name, .{ .iterate = true }) catch |err| {
+        if (err == error.FileNotFound and expected_count == 0) return;
+        if (err == error.FileNotFound) return error.MissingFailureDirectory;
+        return err;
+    };
+    defer directory.close(io);
+
+    var entry_count: u32 = 0;
+    var iterator = directory.iterate();
+    while (try iterator.next(io)) |entry| {
+        entry_count += 1;
+        if (entry_count > entry_count_max) return error.TooManyFailureEntries;
+        if (entry.kind != .file) return error.InvalidFailureEntry;
+
+        const stat = try directory.statFile(io, entry.name, .{});
+        if (stat.size > max_input_len) return error.FailureTooLong;
+    }
+    if (entry_count != expected_count) return error.FailureCountMismatch;
 }
 
 fn validateTargetArtifact(
@@ -204,6 +273,12 @@ fn validateTargetArtifact(
     target: Target,
     artifact: Database.TargetArtifact,
 ) !void {
+    if (!std.mem.eql(u8, artifact.project_id, options.project_id)) {
+        return error.ProjectIDMismatch;
+    }
+    if (!std.mem.eql(u8, artifact.repository, options.repository)) {
+        return error.RepositoryMismatch;
+    }
     if (artifact.campaign_id != options.campaign_id) return error.CampaignIDMismatch;
     if (!std.mem.eql(u8, artifact.ref, options.expected_ref)) return error.RefMismatch;
     if (!std.mem.eql(u8, artifact.commit_sha, options.expected_sha)) {
@@ -213,6 +288,9 @@ fn validateTargetArtifact(
         return error.CommitTimestampMismatch;
     }
     if (!std.mem.eql(u8, artifact.result.target, target.target)) return error.TargetMismatch;
+    if (artifact.result.corpus_version != target.corpus_version) {
+        return error.CorpusVersionMismatch;
+    }
     try Database.validateTargetResult(arena, artifact.result, target.max_input_len);
 }
 
@@ -223,6 +301,7 @@ fn validateManifest(manifest: Manifest) !void {
     for (manifest.include, 0..) |target, target_index| {
         try Database.validateTargetName(target.target);
         if (target.max_input_len == 0) return error.InvalidInputLimit;
+        if (target.corpus_version == 0) return error.InvalidCorpusVersion;
         for (manifest.include[0..target_index]) |previous| {
             if (std.mem.eql(u8, previous.target, target.target)) {
                 return error.DuplicateTarget;
@@ -245,4 +324,5 @@ const Manifest = struct {
 const Target = struct {
     target: []const u8,
     max_input_len: u32,
+    corpus_version: u32,
 };
