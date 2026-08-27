@@ -76,11 +76,12 @@ $STATE_ROOT/
 
 The project, target, and target-published corpus version form the persistent corpus identity. A
 campaign for the canonical `main` ref may update `current`. Other refs may use `current` as input but
-cannot publish over it. The job overlays current inputs with `corpus/<target>-cmin`, runs AFL++, and
-minimizes the new `default/queue` with `afl-cmin`. A cmin failure stops publication and propagates its
-original error, leaving the previous `current` corpus unchanged. Before publication, every candidate
-must be a nonempty flat directory of regular inputs within the target limit and must pass
-`zig-out/bin/repro-<target>` as a directory replay.
+cannot publish over it. The job overlays current inputs with `corpus/<target>-cmin` under SHA-256
+content names, so equal inputs deduplicate and unrelated inputs cannot overwrite each other by
+basename. It then runs AFL++ and minimizes the new `default/queue` with `afl-cmin`. A cmin failure
+stops publication and propagates its original error, leaving the previous `current` corpus unchanged.
+Before publication, every candidate must be a nonempty flat directory of regular inputs within the
+target limit and must pass `zig-out/bin/repro-<target>` as a directory replay.
 
 Publication renames the candidate to a new immutable version, creates a `current.next` symlink, and
 atomically renames the symlink over `current`. The live version is never changed in place. Cleanup
