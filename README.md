@@ -95,9 +95,10 @@ source until failure storage moves to S3. Campaigns without failures leave no pe
 directory. The collector enforces AFL++ 5.02c's limits of 25,600 unique crashes and 512 unique hangs
 per target run.
 
-The namespaced layout intentionally rejects the former `$STATE_ROOT/corpus/<target>` layout. Before
-deploying this workflow, move each existing target directory to
-`$STATE_ROOT/projects/lodestar-z/corpus/<target>/v1`.
+Before deploying this workflow, copy or move each existing `$STATE_ROOT/corpus/<target>` directory to
+`$STATE_ROOT/projects/lodestar-z/corpus/<target>/v1`. Both layouts may coexist only when the new
+target has a `current` symlink, which permits branch validation while the default workflow still uses
+the old layout. Remove the old layout after this workflow reaches `main`.
 
 ## Zig tools
 
