@@ -73,10 +73,62 @@ fn writeHeader(writer: *std.Io.Writer) !void {
         \\    section { margin: 2rem 0 3rem; }
         \\    table { border-collapse: collapse; width: 100%; }
         \\    th, td { border-bottom: 1px solid #8888; padding: .65rem; text-align: left; }
-        \\    th { position: sticky; top: 0; background: Canvas; }
+        \\    th { position: sticky; top: 0; z-index: 1; background: Canvas; }
         \\    code { overflow-wrap: anywhere; }
         \\    .failure { color: #b3261e; font-weight: 700; }
         \\    .foot, .summary { color: GrayText; }
+        \\    .metric {
+        \\      position: relative;
+        \\      padding: 0;
+        \\      border: 0;
+        \\      border-bottom: 1px dotted currentColor;
+        \\      background: none;
+        \\      color: inherit;
+        \\      cursor: help;
+        \\      font: inherit;
+        \\      outline-offset: .2rem;
+        \\    }
+        \\    .metric::before {
+        \\      content: "?";
+        \\      display: inline-grid;
+        \\      place-items: center;
+        \\      width: 1rem;
+        \\      height: 1rem;
+        \\      margin-right: .3rem;
+        \\      border: 1px solid currentColor;
+        \\      border-radius: 50%;
+        \\      font-size: .7rem;
+        \\      line-height: 1;
+        \\    }
+        \\    .metric::after {
+        \\      content: attr(data-tooltip);
+        \\      position: absolute;
+        \\      top: calc(100% + .7rem);
+        \\      left: 50%;
+        \\      z-index: 2;
+        \\      width: min(22rem, 75vw);
+        \\      padding: .65rem .75rem;
+        \\      border: 1px solid #8888;
+        \\      border-radius: .4rem;
+        \\      background: Canvas;
+        \\      color: CanvasText;
+        \\      box-shadow: 0 .3rem 1rem #0004;
+        \\      font-size: .85rem;
+        \\      font-weight: 400;
+        \\      line-height: 1.35;
+        \\      opacity: 0;
+        \\      pointer-events: none;
+        \\      transform: translateX(-50%);
+        \\      transition: opacity .12s ease;
+        \\      visibility: hidden;
+        \\      white-space: normal;
+        \\    }
+        \\    .metric:hover::after, .metric:focus::after {
+        \\      opacity: 1;
+        \\      visibility: visible;
+        \\    }
+        \\    th:first-child .metric::after { left: 0; transform: none; }
+        \\    th:last-child .metric::after { right: 0; left: auto; transform: none; }
         \\    @media (max-width: 60rem) {
         \\      main { padding: 1rem; }
         \\      table { display: block; overflow: auto; }
@@ -90,6 +142,7 @@ fn writeHeader(writer: *std.Io.Writer) !void {
         \\    Raw data
         \\  </a></p>
         \\  <p class="foot">
+        \\    Hover over or focus a ? column heading to see its definition.
         \\    <a href="https://aflplus.plus/docs/afl-fuzz_approach/">AFL map edges</a>
         \\    are coverage-map slots reached in each instrumented target binary, not source line
         \\    or function coverage. Queue entries are inputs that produced interesting coverage.
@@ -186,8 +239,28 @@ fn writeCampaign(writer: *std.Io.Writer, campaign: Database.Campaign) !void {
         \\    <table>
         \\      <thead>
         \\        <tr>
-        \\          <th>Target</th><th>Failures</th><th>Queue</th>
-        \\          <th>AFL map edges</th><th>Work</th>
+        \\          <th><button class="metric" type="button"
+        \\            aria-label="Target. Fuzz harness name and corpus-format version."
+        \\            data-tooltip="Fuzz harness name. corpus vN is the target's corpus-format
+        \\              namespace, not a campaign number.">Target</button></th>
+        \\          <th><button class="metric" type="button"
+        \\            aria-label="Failures. Unique AFL++ crashes and hangs saved in this run."
+        \\            data-tooltip="Unique crashes and hangs AFL++ saved in this run. Expand a
+        \\              base64 sample here; download the run artifact for every raw input."
+        \\            >Failures</button></th>
+        \\          <th><button class="metric" type="button"
+        \\            aria-label="Queue. New entries and total entries when the worker stopped."
+        \\            data-tooltip="new is AFL++ corpus_found for this run. at exit is corpus_count,
+        \\              the total queue size when the worker stopped.">Queue</button></th>
+        \\          <th><button class="metric" type="button"
+        \\            aria-label="AFL map edges. Coverage-map slots reached by the exit queue."
+        \\            data-tooltip="AFL++ edges_found: coverage-map slots reached by the exit queue.
+        \\              This is not source-line or function coverage and is not comparable across
+        \\              different binaries.">AFL map edges</button></th>
+        \\          <th><button class="metric" type="button"
+        \\            aria-label="Work. Executions, average throughput, and target runtime."
+        \\            data-tooltip="Total executions, average executions per second, and target
+        \\              runtime. Target jobs run in parallel.">Work</button></th>
         \\        </tr>
         \\      </thead>
         \\      <tbody>
