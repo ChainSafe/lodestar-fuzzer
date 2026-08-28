@@ -50,6 +50,10 @@ Aggregation runs only after discovery and every target job complete successfully
 still preserve and upload failure evidence after corpus post-processing fails, but an incomplete
 matrix never updates `data.json` or Pages.
 
+Only a controller `main` campaign targeting the project's canonical ref records `data.json` or
+deploys Pages. Non-canonical target refs still aggregate and validate their artifacts, but do not
+publish them as canonical history.
+
 ## Runner contract
 
 Campaign jobs require these labels:

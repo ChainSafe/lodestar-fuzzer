@@ -466,7 +466,7 @@ jobs:
           ../controller-tools/zig-out/bin/generate-website
 
       - name: Record database
-        if: ${{ github.ref == 'refs/heads/main' }}
+        if: ${{ github.ref == 'refs/heads/main' && inputs.target_ref == inputs.canonical_ref }}
         shell: bash
         run: |
           set -euo pipefail
@@ -481,13 +481,13 @@ jobs:
           git push origin HEAD:main
 
       - name: Upload Pages artifact
-        if: ${{ github.ref == 'refs/heads/main' }}
+        if: ${{ github.ref == 'refs/heads/main' && inputs.target_ref == inputs.canonical_ref }}
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
           path: controller-data/www
 
   deploy:
-    if: ${{ github.ref == 'refs/heads/main' }}
+    if: ${{ github.ref == 'refs/heads/main' && inputs.target_ref == inputs.canonical_ref }}
     needs: aggregate
     runs-on: ubuntu-24.04
     permissions:

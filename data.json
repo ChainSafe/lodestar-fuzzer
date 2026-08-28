@@ -1,215 +1,7 @@
 {
-  "schema_version": 2,
+  "schema_version": 1,
   "campaigns": [
     {
-      "project_id": "lodestar-z",
-      "repository": "ChainSafe/lodestar-z",
-      "campaign_id": 33147281673,
-      "ref": "GrapeBaBa/fuzz-2",
-      "commit_sha": "4109b1d1c08832852e74f9c20a9d920ca4c07d25",
-      "commit_timestamp": 1787891195,
-      "start_timestamp": 1787897798,
-      "results": [
-        {
-          "target": "ssz_basic",
-          "corpus_version": 1,
-          "start_timestamp": 1787897798,
-          "run_time_seconds": 60,
-          "edges_found": 60,
-          "total_edges": 14116,
-          "corpus_count": 17,
-          "corpus_found": 0,
-          "unique_crashes": 0,
-          "unique_hangs": 0,
-          "total_execs": 3915952,
-          "encoded_crash": null,
-          "encoded_hang": null
-        },
-        {
-          "target": "ssz_bitlist",
-          "corpus_version": 1,
-          "start_timestamp": 1787897799,
-          "run_time_seconds": 60,
-          "edges_found": 93,
-          "total_edges": 14220,
-          "corpus_count": 20,
-          "corpus_found": 1,
-          "unique_crashes": 0,
-          "unique_hangs": 0,
-          "total_execs": 3926179,
-          "encoded_crash": null,
-          "encoded_hang": null
-        },
-        {
-          "target": "ssz_bitvector",
-          "corpus_version": 1,
-          "start_timestamp": 1787897802,
-          "run_time_seconds": 60,
-          "edges_found": 49,
-          "total_edges": 14099,
-          "corpus_count": 11,
-          "corpus_found": 0,
-          "unique_crashes": 0,
-          "unique_hangs": 0,
-          "total_execs": 3962798,
-          "encoded_crash": null,
-          "encoded_hang": null
-        },
-        {
-          "target": "ssz_bytelist",
-          "corpus_version": 1,
-          "start_timestamp": 1787897798,
-          "run_time_seconds": 60,
-          "edges_found": 56,
-          "total_edges": 14117,
-          "corpus_count": 13,
-          "corpus_found": 0,
-          "unique_crashes": 0,
-          "unique_hangs": 0,
-          "total_execs": 3391168,
-          "encoded_crash": null,
-          "encoded_hang": null
-        },
-        {
-          "target": "ssz_containers",
-          "corpus_version": 1,
-          "start_timestamp": 1787897798,
-          "run_time_seconds": 60,
-          "edges_found": 175,
-          "total_edges": 14451,
-          "corpus_count": 39,
-          "corpus_found": 0,
-          "unique_crashes": 0,
-          "unique_hangs": 0,
-          "total_execs": 3475282,
-          "encoded_crash": null,
-          "encoded_hang": null
-        },
-        {
-          "target": "ssz_lists",
-          "corpus_version": 1,
-          "start_timestamp": 1787897807,
-          "run_time_seconds": 60,
-          "edges_found": 259,
-          "total_edges": 14562,
-          "corpus_count": 65,
-          "corpus_found": 5,
-          "unique_crashes": 0,
-          "unique_hangs": 0,
-          "total_execs": 3644908,
-          "encoded_crash": null,
-          "encoded_hang": null
-        },
-        {
-          "target": "ssz_chunked_leaf_set",
-          "corpus_version": 1,
-          "start_timestamp": 1787897815,
-          "run_time_seconds": 60,
-          "edges_found": 653,
-          "total_edges": 16516,
-          "corpus_count": 257,
-          "corpus_found": 39,
-          "unique_crashes": 0,
-          "unique_hangs": 0,
-          "total_execs": 56030,
-          "encoded_crash": null,
-          "encoded_hang": null
-        },
-        {
-          "target": "ssz_nested_opaque_proof",
-          "corpus_version": 1,
-          "start_timestamp": 1787897820,
-          "run_time_seconds": 60,
-          "edges_found": 274,
-          "total_edges": 14772,
-          "corpus_count": 81,
-          "corpus_found": 0,
-          "unique_crashes": 0,
-          "unique_hangs": 0,
-          "total_execs": 601,
-          "encoded_crash": null,
-          "encoded_hang": null
-        },
-        {
-          "target": "ssz_opaque_roundtrip",
-          "corpus_version": 1,
-          "start_timestamp": 1787897808,
-          "run_time_seconds": 60,
-          "edges_found": 386,
-          "total_edges": 15379,
-          "corpus_count": 54,
-          "corpus_found": 1,
-          "unique_crashes": 0,
-          "unique_hangs": 0,
-          "total_execs": 43857,
-          "encoded_crash": null,
-          "encoded_hang": null
-        },
-        {
-          "target": "bls_public_key",
-          "corpus_version": 1,
-          "start_timestamp": 1787897801,
-          "run_time_seconds": 60,
-          "edges_found": 31,
-          "total_edges": 14068,
-          "corpus_count": 9,
-          "corpus_found": 0,
-          "unique_crashes": 0,
-          "unique_hangs": 0,
-          "total_execs": 3189601,
-          "encoded_crash": null,
-          "encoded_hang": null
-        },
-        {
-          "target": "bls_signature",
-          "corpus_version": 1,
-          "start_timestamp": 1787897802,
-          "run_time_seconds": 60,
-          "edges_found": 31,
-          "total_edges": 14070,
-          "corpus_count": 8,
-          "corpus_found": 0,
-          "unique_crashes": 0,
-          "unique_hangs": 0,
-          "total_execs": 3191082,
-          "encoded_crash": null,
-          "encoded_hang": null
-        },
-        {
-          "target": "bls_aggregate_pk",
-          "corpus_version": 1,
-          "start_timestamp": 1787897802,
-          "run_time_seconds": 60,
-          "edges_found": 43,
-          "total_edges": 14096,
-          "corpus_count": 51,
-          "corpus_found": 4,
-          "unique_crashes": 0,
-          "unique_hangs": 0,
-          "total_execs": 358387,
-          "encoded_crash": null,
-          "encoded_hang": null
-        },
-        {
-          "target": "bls_aggregate_sig",
-          "corpus_version": 1,
-          "start_timestamp": 1787897908,
-          "run_time_seconds": 60,
-          "edges_found": 37,
-          "total_edges": 14091,
-          "corpus_count": 37,
-          "corpus_found": 1,
-          "unique_crashes": 0,
-          "unique_hangs": 0,
-          "total_execs": 743688,
-          "encoded_crash": null,
-          "encoded_hang": null
-        }
-      ]
-    },
-    {
-      "project_id": "lodestar-z",
-      "repository": "ChainSafe/lodestar-z",
       "campaign_id": 32742654189,
       "ref": "GrapeBaBa/fuzz-2",
       "commit_sha": "5d49d3815b56daa82d0bf4711bb14390c14b45cc",
@@ -218,7 +10,6 @@
       "results": [
         {
           "target": "ssz_basic",
-          "corpus_version": 1,
           "start_timestamp": 1787583997,
           "run_time_seconds": 7200,
           "edges_found": 60,
@@ -233,7 +24,6 @@
         },
         {
           "target": "ssz_bitlist",
-          "corpus_version": 1,
           "start_timestamp": 1787583997,
           "run_time_seconds": 7200,
           "edges_found": 93,
@@ -248,7 +38,6 @@
         },
         {
           "target": "ssz_bitvector",
-          "corpus_version": 1,
           "start_timestamp": 1787583996,
           "run_time_seconds": 7200,
           "edges_found": 49,
@@ -263,7 +52,6 @@
         },
         {
           "target": "ssz_bytelist",
-          "corpus_version": 1,
           "start_timestamp": 1787583996,
           "run_time_seconds": 7200,
           "edges_found": 56,
@@ -278,7 +66,6 @@
         },
         {
           "target": "ssz_containers",
-          "corpus_version": 1,
           "start_timestamp": 1787583997,
           "run_time_seconds": 7200,
           "edges_found": 175,
@@ -293,7 +80,6 @@
         },
         {
           "target": "ssz_lists",
-          "corpus_version": 1,
           "start_timestamp": 1787583997,
           "run_time_seconds": 7200,
           "edges_found": 199,
@@ -308,7 +94,6 @@
         },
         {
           "target": "ssz_chunked_leaf_set",
-          "corpus_version": 1,
           "start_timestamp": 1787584011,
           "run_time_seconds": 7200,
           "edges_found": 635,
@@ -323,7 +108,6 @@
         },
         {
           "target": "ssz_nested_opaque_proof",
-          "corpus_version": 1,
           "start_timestamp": 1787584009,
           "run_time_seconds": 7200,
           "edges_found": 274,
@@ -338,7 +122,6 @@
         },
         {
           "target": "ssz_opaque_roundtrip",
-          "corpus_version": 1,
           "start_timestamp": 1787584005,
           "run_time_seconds": 7200,
           "edges_found": 386,
@@ -353,7 +136,6 @@
         },
         {
           "target": "bls_public_key",
-          "corpus_version": 1,
           "start_timestamp": 1787583999,
           "run_time_seconds": 7200,
           "edges_found": 31,
@@ -368,7 +150,6 @@
         },
         {
           "target": "bls_signature",
-          "corpus_version": 1,
           "start_timestamp": 1787583999,
           "run_time_seconds": 7200,
           "edges_found": 31,
@@ -383,7 +164,6 @@
         },
         {
           "target": "bls_aggregate_pk",
-          "corpus_version": 1,
           "start_timestamp": 1787583998,
           "run_time_seconds": 7200,
           "edges_found": 43,
@@ -398,7 +178,6 @@
         },
         {
           "target": "bls_aggregate_sig",
-          "corpus_version": 1,
           "start_timestamp": 1787591247,
           "run_time_seconds": 7200,
           "edges_found": 37,
@@ -414,8 +193,6 @@
       ]
     },
     {
-      "project_id": "lodestar-z",
-      "repository": "ChainSafe/lodestar-z",
       "campaign_id": 32701884675,
       "ref": "GrapeBaBa/fuzz-2",
       "commit_sha": "5d49d3815b56daa82d0bf4711bb14390c14b45cc",
@@ -424,7 +201,6 @@
       "results": [
         {
           "target": "ssz_basic",
-          "corpus_version": 1,
           "start_timestamp": 1787556808,
           "run_time_seconds": 60,
           "edges_found": 60,
@@ -439,7 +215,6 @@
         },
         {
           "target": "ssz_bitlist",
-          "corpus_version": 1,
           "start_timestamp": 1787556809,
           "run_time_seconds": 60,
           "edges_found": 93,
@@ -454,7 +229,6 @@
         },
         {
           "target": "ssz_bitvector",
-          "corpus_version": 1,
           "start_timestamp": 1787556808,
           "run_time_seconds": 60,
           "edges_found": 49,
@@ -469,7 +243,6 @@
         },
         {
           "target": "ssz_bytelist",
-          "corpus_version": 1,
           "start_timestamp": 1787556808,
           "run_time_seconds": 60,
           "edges_found": 56,
@@ -484,7 +257,6 @@
         },
         {
           "target": "ssz_containers",
-          "corpus_version": 1,
           "start_timestamp": 1787556808,
           "run_time_seconds": 60,
           "edges_found": 175,
@@ -499,7 +271,6 @@
         },
         {
           "target": "ssz_lists",
-          "corpus_version": 1,
           "start_timestamp": 1787556809,
           "run_time_seconds": 60,
           "edges_found": 199,
@@ -514,7 +285,6 @@
         },
         {
           "target": "ssz_chunked_leaf_set",
-          "corpus_version": 1,
           "start_timestamp": 1787556822,
           "run_time_seconds": 60,
           "edges_found": 635,
@@ -529,7 +299,6 @@
         },
         {
           "target": "ssz_nested_opaque_proof",
-          "corpus_version": 1,
           "start_timestamp": 1787556819,
           "run_time_seconds": 60,
           "edges_found": 268,
@@ -544,7 +313,6 @@
         },
         {
           "target": "ssz_opaque_roundtrip",
-          "corpus_version": 1,
           "start_timestamp": 1787556817,
           "run_time_seconds": 60,
           "edges_found": 386,
@@ -559,7 +327,6 @@
         },
         {
           "target": "bls_public_key",
-          "corpus_version": 1,
           "start_timestamp": 1787556810,
           "run_time_seconds": 60,
           "edges_found": 31,
@@ -574,7 +341,6 @@
         },
         {
           "target": "bls_signature",
-          "corpus_version": 1,
           "start_timestamp": 1787556810,
           "run_time_seconds": 60,
           "edges_found": 31,
@@ -589,7 +355,6 @@
         },
         {
           "target": "bls_aggregate_pk",
-          "corpus_version": 1,
           "start_timestamp": 1787556809,
           "run_time_seconds": 60,
           "edges_found": 43,
@@ -604,7 +369,6 @@
         },
         {
           "target": "bls_aggregate_sig",
-          "corpus_version": 1,
           "start_timestamp": 1787556918,
           "run_time_seconds": 60,
           "edges_found": 37,
