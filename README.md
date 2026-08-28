@@ -10,7 +10,81 @@ The workflow structure is inspired by
 independent Zig and GitHub Actions adaptation for project-owned target metadata and a single AFL++
 worker per target.
 
-## Workflow
+## Why this repository
+
+### Why not OSS-Fuzz?
+
+[OSS-Fuzz](https://google.github.io/oss-fuzz/) is a mature continuous fuzzing service and may
+complement this system in the future. This repository uses a dedicated integration today because
+its contract is different:
+
+- The target projects publish native Zig 0.16 build and replay commands. The campaign pins Zig,
+  LLVM, and AFL++ versions instead of maintaining the `project.yaml`, Dockerfile, `build.sh`, and
+  required libFuzzer-compatible entry point used by an
+  [OSS-Fuzz project](https://google.github.io/oss-fuzz/getting-started/new-project-guide/).
+- The same small metadata contract discovers targets owned by multiple repositories. Harness code,
+  seed inputs, input limits, and reproducers remain versioned with the code they test.
+- The dedicated runner keeps a project-, target-, and corpus-version-specific AFL++ corpus. The
+  workflow controls exactly when a canonical run may replace that corpus, while branch runs can read
+  it without publishing over it.
+- Campaign artifacts, summary data, and the public report stay in the project's existing GitHub
+  workflow. Maintainers can inspect a run without a separate ClusterFuzz or Google Cloud account.
+
+This is not a claim that OSS-Fuzz is unsuitable for Zig or consensus software. OSS-Fuzz documents
+first-class support for several languages and notes that other LLVM-based languages may also work.
+An OSS-Fuzz integration could add independent engines, sanitizers, and infrastructure later without
+changing the project-owned fuzz target contract used here.
+
+### Why scheduled, finite GitHub Actions campaigns?
+
+Coverage-guided fuzzing benefits from cumulative corpus state, but the fuzzing process does not have
+to run forever. Each bounded target job resumes from the canonical corpus, explores for a fixed time,
+and publishes a minimized successor only after that target passes fuzzing, minimization, and replay.
+The campaign summary is published only after the entire target matrix succeeds. Repeating that
+process captures new code, targets, and seeds while keeping CPU use and result boundaries predictable.
+
+GitHub Actions provides the required control plane in the same place as the source repositories:
+
+- scheduled canonical campaigns run the latest controller `main` against the target's canonical ref;
+- manual runs can test a branch, tag, or commit without changing canonical history;
+- the matrix gives each target an independent job, timeout, log, and artifact;
+- concurrency serializes campaigns that share the persistent runner state; and
+- hosted aggregation can update `data.json` and Pages without giving the fuzz runner Git write access.
+
+The current Lodestar-Z caller requests a two-hour campaign per target every six hours. GitHub
+scheduled workflows may start later than the requested cron time, so the schedule is a periodic
+trigger, not a real-time guarantee. A failed or incomplete campaign retains any uploaded diagnostic
+artifacts. A failed target cannot publish its candidate corpus. Successful targets in the same matrix
+may already have updated their corpora, but an incomplete matrix cannot update the database or Pages.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    caller[Scheduled or manual caller] --> discover[Hosted discovery job]
+    project["Target project<br/>metadata, harnesses, seeds, reproducers"] --> discover
+    discover --> matrix["One self-hosted AFL++ job<br/>per target"]
+    state[("Runner-local corpus<br/>and durable failures")] <--> matrix
+    matrix --> artifacts[Result and raw-failure artifacts]
+    artifacts --> aggregate[Hosted validation and aggregation]
+    aggregate --> database[("data.json<br/>latest 3 campaigns per project")]
+    aggregate --> page[Static GitHub Pages report]
+```
+
+The hosted jobs form the control plane. They resolve an immutable target revision, validate target
+metadata, require one result per discovered target, and decide whether publication is allowed. The
+self-hosted matrix is the data plane. It compiles the target project, replays committed seeds, reads
+the current persistent corpus, runs AFL++, and preserves failures.
+
+Two publication gates protect canonical state:
+
+1. The controller workflow must run from `lodestar-fuzzer` `main`.
+2. The selected target ref must equal that project's configured canonical ref.
+
+Every other combination, including a controller feature branch targeting a project `main`, may read
+the canonical corpus but cannot update the corpus, `data.json`, or Pages.
+
+## How a campaign runs
 
 `.github/workflows/fuzz.yml` is the reusable single-project campaign. Small caller workflows provide
 the project identity, repository, canonical ref, metadata path, and schedule. The current
@@ -53,6 +127,18 @@ matrix never updates `data.json` or Pages.
 Only a controller `main` campaign targeting the project's canonical ref records `data.json` or
 deploys Pages. Non-canonical target refs still aggregate and validate their artifacts, but do not
 publish them as canonical history.
+
+In order, a complete campaign:
+
+1. Resolves the requested project ref to an immutable commit and validates its target metadata.
+2. Expands that metadata into one matrix item per target.
+3. Builds the selected harness and replays its committed bootstrap corpus.
+4. Overlays the canonical runner corpus with committed inputs under content-addressed names.
+5. Runs one finite AFL++ worker and captures its queue, statistics, crashes, and hangs.
+6. For canonical campaigns, minimizes and replays the candidate corpus before atomically publishing
+   it. Non-canonical campaigns skip this step.
+7. Requires and validates every target result, updates the bounded database, and deploys Pages only
+   when both publication gates are satisfied.
 
 ## Runner contract
 
@@ -134,6 +220,23 @@ campaigns. Extending that bound requires an explicit configuration change.
 
 Lodestar-Z satisfies this contract through its pending fuzz PR. Zapi does not expose it yet, so its
 caller should be added only after Zapi publishes concrete targets and reproducers.
+
+## Pages metrics
+
+The [public report](https://chainsafe.github.io/lodestar-fuzzer/) groups rows by complete campaign.
+Its table headers expose these definitions as hover and keyboard-focus tooltips:
+
+| Column | Meaning |
+| --- | --- |
+| Target | The project-published target name. `corpus vN` is the target's corpus-format namespace, not the campaign number. |
+| Failures | AFL++ unique crashes and hangs saved during this target run. The page includes at most one representative base64 sample of each kind; the run artifact and durable runner storage retain every raw failure. |
+| Queue | `new` is AFL++ `corpus_found`, the queue entries discovered locally during this run. `at exit` is `corpus_count`, the total queue size when the worker finished. |
+| AFL map edges | `edges_found`, the instrumentation-map slots reached by the exit queue. It is an absolute target-local metric, not source-line or function coverage and not directly comparable between different binaries. |
+| Work | Total target executions, average executions per second, and target runtime. Campaign target time is summed across parallel jobs, so it is not wall-clock duration. |
+
+The campaign heading links to the GitHub Actions run and exact tested commit. The summary totals the
+rows below it. `data.json` retains only the latest three complete campaigns per project, and
+re-running the same Actions run replaces its existing campaign rather than adding a duplicate.
 
 ## Zig tools
 
