@@ -1,7 +1,6 @@
 const std = @import("std");
 const Database = @import("Database.zig");
 
-const failure_entry_count_max: u32 = 256;
 const stats_line_count_max: u32 = 1_024;
 
 pub fn main(init: std.process.Init) !void {
@@ -14,24 +13,30 @@ pub fn main(init: std.process.Init) !void {
     const arena = arena_state.allocator();
 
     const args = try init.minimal.args.toSlice(arena);
-    if (args.len != 11) return error.ExpectedTenArguments;
+    if (args.len != 14) return error.ExpectedThirteenArguments;
 
-    const campaign_id = try std.fmt.parseInt(u64, args[1], 10);
-    const requested_ref = args[2];
-    const commit_sha = args[3];
-    const commit_timestamp = try std.fmt.parseInt(u64, args[4], 10);
-    const target = args[5];
-    const max_input_len = try std.fmt.parseInt(u32, args[6], 10);
-    const fuzz_output_path = args[7];
-    const crash_path = args[8];
-    const hang_path = args[9];
-    const output_path = args[10];
+    const project_id = args[1];
+    const repository = args[2];
+    const campaign_id = try std.fmt.parseInt(u64, args[3], 10);
+    const requested_ref = args[4];
+    const commit_sha = args[5];
+    const commit_timestamp = try std.fmt.parseInt(u64, args[6], 10);
+    const target = args[7];
+    const corpus_version = try std.fmt.parseInt(u32, args[8], 10);
+    const max_input_len = try std.fmt.parseInt(u32, args[9], 10);
+    const fuzz_output_path = args[10];
+    const crash_path = args[11];
+    const hang_path = args[12];
+    const output_path = args[13];
 
     if (campaign_id == 0) return error.InvalidCampaignID;
+    try Database.validateProjectID(project_id);
+    try Database.validateRepository(repository);
     try Database.validateRef(requested_ref);
     try Database.validateSHA(commit_sha);
     try Database.validateTargetName(target);
     if (commit_timestamp == 0) return error.InvalidCommitTimestamp;
+    if (corpus_version == 0) return error.InvalidCorpusVersion;
     if (max_input_len == 0) return error.InvalidInputLimit;
 
     const stats_path = try std.fs.path.join(
@@ -40,16 +45,35 @@ pub fn main(init: std.process.Init) !void {
     );
     const stats = try loadStats(arena, init.io, stats_path);
 
-    const hang_failure = try loadShortestFailure(arena, init.io, hang_path, max_input_len);
-    const crash_failure = try loadShortestFailure(arena, init.io, crash_path, max_input_len);
+    const hang_failure = try loadShortestFailure(
+        arena,
+        init.io,
+        hang_path,
+        max_input_len,
+        Database.hang_count_max,
+    );
+    const crash_failure = try loadShortestFailure(
+        arena,
+        init.io,
+        crash_path,
+        max_input_len,
+        Database.crash_count_max,
+    );
+    if (crash_failure.entry_count != stats.unique_crashes) {
+        return error.CrashCountMismatch;
+    }
+    if (hang_failure.entry_count != stats.unique_hangs) return error.HangCountMismatch;
 
     const artifact: Database.TargetArtifact = .{
+        .project_id = project_id,
+        .repository = repository,
         .campaign_id = campaign_id,
         .ref = requested_ref,
         .commit_sha = commit_sha,
         .commit_timestamp = commit_timestamp,
         .result = .{
             .target = target,
+            .corpus_version = corpus_version,
             .start_timestamp = stats.start_timestamp,
             .run_time_seconds = stats.run_time_seconds,
             .edges_found = stats.edges_found,
@@ -59,8 +83,8 @@ pub fn main(init: std.process.Init) !void {
             .unique_crashes = stats.unique_crashes,
             .unique_hangs = stats.unique_hangs,
             .total_execs = stats.total_execs,
-            .encoded_crash = crash_failure,
-            .encoded_hang = hang_failure,
+            .encoded_crash = crash_failure.encoded,
+            .encoded_hang = hang_failure.encoded,
         },
     };
     try Database.validateTargetResult(arena, artifact.result, max_input_len);
@@ -135,7 +159,8 @@ fn loadShortestFailure(
     io: std.Io,
     path: []const u8,
     max_input_len: u32,
-) !?[]const u8 {
+    entry_count_max: u32,
+) !FailureDirectory {
     var directory = try std.Io.Dir.cwd().openDir(io, path, .{ .iterate = true });
     defer directory.close(io);
 
@@ -145,7 +170,7 @@ fn loadShortestFailure(
     var iterator = directory.iterate();
     while (try iterator.next(io)) |entry| {
         entry_count += 1;
-        if (entry_count > failure_entry_count_max) return error.TooManyFailureEntries;
+        if (entry_count > entry_count_max) return error.TooManyFailureEntries;
         if (entry.kind != .file) return error.InvalidFailureEntry;
 
         const stat = try directory.statFile(io, entry.name, .{});
@@ -160,7 +185,10 @@ fn loadShortestFailure(
         }
     }
 
-    const name = selected_name orelse return null;
+    const name = selected_name orelse return .{
+        .entry_count = entry_count,
+        .encoded = null,
+    };
     const content = try directory.readFileAlloc(
         io,
         name,
@@ -171,7 +199,10 @@ fn loadShortestFailure(
 
     const encoded_len = std.base64.standard.Encoder.calcSize(content.len);
     const encoded = try arena.alloc(u8, encoded_len);
-    return std.base64.standard.Encoder.encode(encoded, content);
+    return .{
+        .entry_count = entry_count,
+        .encoded = std.base64.standard.Encoder.encode(encoded, content),
+    };
 }
 
 fn writeJSON(
@@ -210,6 +241,11 @@ const FuzzerStats = struct {
     unique_crashes: u64 = 0,
     unique_hangs: u64 = 0,
     total_execs: u64 = 0,
+};
+
+const FailureDirectory = struct {
+    entry_count: u32,
+    encoded: ?[]const u8,
 };
 
 const SeenStats = struct {
