@@ -12,16 +12,45 @@ worker per target.
 
 ## Why this repository
 
-### Why not OSS-Fuzz?
+### Why not OSS-Fuzz today?
 
-[OSS-Fuzz](https://google.github.io/oss-fuzz/) is a mature continuous fuzzing service and may
-complement this system in the future. This repository uses a dedicated integration today because
-its contract is different:
+The primary blocker is sanitizer support. OSS-Fuzz runs its fuzzing engines in combination with
+sanitizer builds. Its
+[project contract](https://google.github.io/oss-fuzz/getting-started/new-project-guide/) defaults to
+AddressSanitizer and UndefinedBehaviorSanitizer, supports MemorySanitizer, and requires a libFuzzer
+build. The sanitizer flags must instrument the project code and link the matching runtime;
+instrumenting only C dependencies would leave the Zig code under test uninstrumented. Zig is also
+not listed as a first-class OSS-Fuzz language, although OSS-Fuzz notes that other LLVM-based
+languages may work. That classification is secondary to the missing sanitizer builds.
 
-- The target projects publish native Zig 0.16 build and replay commands. The campaign pins Zig,
-  LLVM, and AFL++ versions instead of maintaining the `project.yaml`, Dockerfile, `build.sh`, and
-  required libFuzzer-compatible entry point used by an
-  [OSS-Fuzz project](https://google.github.io/oss-fuzz/getting-started/new-project-guide/).
+Zig 0.16 supports fuzzing coverage through
+[`-ffuzz`](https://github.com/ziglang/zig/pull/20725), so coverage-guided fuzzing and libFuzzer
+integration are not the missing pieces. It does not provide OSS-Fuzz-compatible ASan, MSan, or
+Clang-style UBSan instrumentation for Zig source. The compiler accepts `-fsanitize-c` for C
+undefined behavior checks and `-fsanitize-thread`, but rejects the sanitizer modes OSS-Fuzz needs:
+
+```text
+$ zig build-exe target.zig -fsanitize=address
+error: unrecognized parameter: '-fsanitize=address'
+
+$ zig build-exe target.zig -fsanitize=undefined
+error: unrecognized parameter: '-fsanitize=undefined'
+
+$ zig build-exe target.zig -fsanitize=memory
+error: unrecognized parameter: '-fsanitize=memory'
+```
+
+Zig's ReleaseSafe checks and allocator-aware tests catch important classes of defects, but they do
+not produce the sanitizer instrumentation, runtime reports, or reproduction matrix expected by
+OSS-Fuzz. Until Zig can build the Lodestar-Z harnesses with those sanitizers, an OSS-Fuzz
+integration would miss the main Zig memory-safety boundary it is intended to test. Zig's broader
+sanitizer work, including AddressSanitizer and MemorySanitizer, is discussed upstream in
+[`ziglang/zig#1199`](https://github.com/ziglang/zig/issues/1199).
+
+[OSS-Fuzz](https://google.github.io/oss-fuzz/) is a mature service and can complement this system
+when that blocker is removed. This repository also keeps some project-specific behavior that
+remains useful independently:
+
 - The same small metadata contract discovers targets owned by multiple repositories. Harness code,
   seed inputs, input limits, and reproducers remain versioned with the code they test.
 - The dedicated runner keeps a project-, target-, and corpus-version-specific AFL++ corpus. The
@@ -29,11 +58,6 @@ its contract is different:
   it without publishing over it.
 - Campaign artifacts, summary data, and the public report stay in the project's existing GitHub
   workflow. Maintainers can inspect a run without a separate ClusterFuzz or Google Cloud account.
-
-This is not a claim that OSS-Fuzz is unsuitable for Zig or consensus software. OSS-Fuzz documents
-first-class support for several languages and notes that other LLVM-based languages may also work.
-An OSS-Fuzz integration could add independent engines, sanitizers, and infrastructure later without
-changing the project-owned fuzz target contract used here.
 
 ### Why scheduled, finite GitHub Actions campaigns?
 
