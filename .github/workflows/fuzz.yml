@@ -29,10 +29,6 @@ concurrency:
   group: lodestar-fuzzer-campaign
   cancel-in-progress: false
 
-permissions:
-  actions: read
-  contents: read
-
 env:
   AFL_BIN_DIR: ${{ vars.AFL_BIN_DIR || '/opt/afl++/5.02c/bin' }}
   CANONICAL_REF: ${{ inputs.canonical_ref }}
@@ -47,6 +43,9 @@ env:
 jobs:
   discover:
     runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
     outputs:
       commit_sha: ${{ steps.metadata.outputs.commit_sha }}
       commit_timestamp: ${{ steps.metadata.outputs.commit_timestamp }}
@@ -110,6 +109,9 @@ jobs:
   fuzz:
     needs: discover
     runs-on: [self-hosted, linux, x64, lodestar-fuzz]
+    permissions:
+      actions: read
+      contents: read
     timeout-minutes: 300
     strategy:
       fail-fast: false
