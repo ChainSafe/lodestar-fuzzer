@@ -46,6 +46,10 @@ push.
 Re-running the same GitHub Actions run replaces that campaign. A separate hosted job publishes the
 generated site through GitHub Pages.
 
+Aggregation runs only after discovery and every target job complete successfully. A target job may
+still preserve and upload failure evidence after corpus post-processing fails, but an incomplete
+matrix never updates `data.json` or Pages.
+
 ## Runner contract
 
 Campaign jobs require these labels:

@@ -400,7 +400,7 @@ jobs:
           retention-days: 30
 
   aggregate:
-    if: always() && needs.discover.result == 'success'
+    if: needs.discover.result == 'success' && needs.fuzz.result == 'success'
     needs: [discover, fuzz]
     runs-on: ubuntu-24.04
     permissions:
