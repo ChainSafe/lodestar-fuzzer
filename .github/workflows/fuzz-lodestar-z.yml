@@ -1,0 +1,34 @@
+name: Fuzz Lodestar-Z
+
+on:
+  schedule:
+    - cron: "22 0/6 * * *"
+  workflow_dispatch:
+    inputs:
+      duration_seconds:
+        description: Seconds to run each target
+        type: number
+        default: 7200
+      lodestar_z_ref:
+        description: Lodestar-Z branch, tag, or commit
+        type: string
+        default: main
+
+run-name: Fuzz Lodestar-Z ${{ inputs.lodestar_z_ref || 'main' }}
+
+jobs:
+  campaign:
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
+      pages: write
+    uses: ./.github/workflows/fuzz.yml
+    with:
+      canonical_ref: main
+      duration_seconds: ${{ inputs.duration_seconds || 7200 }}
+      legacy_corpus_migration: true
+      metadata_path: zig-out/share/lodestar-z-fuzz/targets.json
+      project_id: lodestar-z
+      repository: ChainSafe/lodestar-z
+      target_ref: ${{ inputs.lodestar_z_ref || 'main' }}

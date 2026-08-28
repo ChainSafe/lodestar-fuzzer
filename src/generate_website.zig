@@ -45,8 +45,8 @@ pub fn main(init: std.process.Init) !void {
     }
     try writer.writeAll(
         \\  <p class="foot">
-        \\    The database retains the latest three complete campaigns. Re-running the same
-        \\    GitHub Actions run replaces that campaign.
+        \\    The database retains the latest three complete campaigns per project. Re-running
+        \\    the same GitHub Actions run replaces that campaign.
         \\  </p>
         \\</main>
         \\</body>
@@ -64,7 +64,7 @@ fn writeHeader(writer: *std.Io.Writer) !void {
         \\<head>
         \\  <meta charset="utf-8">
         \\  <meta name="viewport" content="width=device-width, initial-scale=1">
-        \\  <title>Lodestar-Z fuzz results</title>
+        \\  <title>Consensus fuzz results</title>
         \\  <style>
         \\    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
         \\    body { margin: 0; }
@@ -85,7 +85,7 @@ fn writeHeader(writer: *std.Io.Writer) !void {
         \\</head>
         \\<body>
         \\<main>
-        \\  <h1>Lodestar-Z fuzz results</h1>
+        \\  <h1>Consensus fuzz results</h1>
         \\  <p><a href="https://github.com/ChainSafe/lodestar-fuzzer/blob/main/data.json">
         \\    Raw data
         \\  </a></p>

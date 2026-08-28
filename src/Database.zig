@@ -3,7 +3,9 @@ const Database = @This();
 
 pub const schema_version_current: u16 = 2;
 pub const schema_version_previous: u16 = 1;
-pub const campaign_limit: u8 = 3;
+pub const campaigns_per_project_max: u8 = 3;
+pub const project_count_max: u8 = 2;
+pub const campaign_count_max: u8 = campaigns_per_project_max * project_count_max;
 pub const target_count_max: u8 = 128;
 pub const crash_count_max: u32 = 25_600;
 pub const hang_count_max: u32 = 512;
@@ -82,8 +84,9 @@ pub fn validate(database: Database, arena: std.mem.Allocator) !void {
     {
         return error.UnsupportedDatabaseSchema;
     }
-    if (database.campaigns.len > campaign_limit) return error.DatabaseExceedsCampaignLimit;
+    if (database.campaigns.len > campaign_count_max) return error.DatabaseExceedsCampaignLimit;
 
+    var project_count: u8 = 0;
     for (database.campaigns, 0..) |campaign, campaign_index| {
         if (campaign.campaign_id == 0) return error.InvalidCampaignID;
         try validateProjectID(campaign.project_id);
@@ -102,8 +105,26 @@ pub fn validate(database: Database, arena: std.mem.Allocator) !void {
             const previous = database.campaigns[campaign_index - 1];
             if (!campaignLessThan({}, previous, campaign)) return error.InvalidCampaignOrder;
         }
+        var project_seen = false;
+        var project_campaign_count: u8 = 1;
         for (database.campaigns[0..campaign_index]) |previous| {
-            if (previous.campaign_id == campaign.campaign_id) return error.DuplicateCampaign;
+            if (std.mem.eql(u8, previous.project_id, campaign.project_id)) {
+                project_seen = true;
+                project_campaign_count += 1;
+                if (!std.mem.eql(u8, previous.repository, campaign.repository)) {
+                    return error.ProjectRepositoryMismatch;
+                }
+                if (previous.campaign_id == campaign.campaign_id) {
+                    return error.DuplicateCampaign;
+                }
+            }
+        }
+        if (!project_seen) {
+            project_count += 1;
+            if (project_count > project_count_max) return error.DatabaseExceedsProjectLimit;
+        }
+        if (project_campaign_count > campaigns_per_project_max) {
+            return error.DatabaseExceedsProjectCampaignLimit;
         }
         for (campaign.results, 0..) |result, result_index| {
             try validateTargetName(result.target);
@@ -196,7 +217,11 @@ pub fn campaignLessThan(_: void, lhs: Campaign, rhs: Campaign) bool {
     if (lhs.start_timestamp != rhs.start_timestamp) {
         return lhs.start_timestamp > rhs.start_timestamp;
     }
-    return lhs.campaign_id > rhs.campaign_id;
+    if (lhs.campaign_id != rhs.campaign_id) return lhs.campaign_id > rhs.campaign_id;
+
+    const project_order = std.mem.order(u8, lhs.project_id, rhs.project_id);
+    if (project_order != .eq) return project_order == .lt;
+    return std.mem.lessThan(u8, lhs.repository, rhs.repository);
 }
 
 pub fn campaignStartTimestamp(results: []const TargetResult) u64 {
@@ -214,7 +239,7 @@ pub fn writeAtomic(
     io: std.Io,
     path: []const u8,
 ) !void {
-    std.debug.assert(database.campaigns.len <= campaign_limit);
+    std.debug.assert(database.campaigns.len <= campaign_count_max);
 
     const output = try gpa.alloc(u8, database_size_max);
     defer gpa.free(output);

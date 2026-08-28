@@ -85,7 +85,15 @@ pub fn main(init: std.process.Init) !void {
         .current => |database| {
             try database.validate(arena);
             for (database.campaigns) |campaign| {
-                if (campaign.campaign_id != campaign_id) {
+                if (std.mem.eql(u8, campaign.project_id, project_id) and
+                    !std.mem.eql(u8, campaign.repository, repository))
+                {
+                    return error.ProjectRepositoryMismatch;
+                }
+                const same_campaign = campaign.campaign_id == campaign_id and
+                    std.mem.eql(u8, campaign.project_id, project_id) and
+                    std.mem.eql(u8, campaign.repository, repository);
+                if (!same_campaign) {
                     try campaigns.append(gpa, campaign);
                 }
             }
@@ -93,14 +101,31 @@ pub fn main(init: std.process.Init) !void {
     }
 
     std.mem.sort(Database.Campaign, campaigns.items, {}, Database.campaignLessThan);
-    if (campaigns.items.len > Database.campaign_limit) {
-        campaigns.shrinkRetainingCapacity(Database.campaign_limit);
-    }
+    retainCampaignsPerProject(&campaigns);
 
-    try Database.writeAtomic(.{
+    const updated_database: Database = .{
         .schema_version = Database.schema_version_current,
         .campaigns = campaigns.items,
-    }, gpa, init.io, database_path);
+    };
+    try updated_database.validate(arena);
+    try Database.writeAtomic(updated_database, gpa, init.io, database_path);
+}
+
+fn retainCampaignsPerProject(campaigns: *std.ArrayList(Database.Campaign)) void {
+    var retained_count: usize = 0;
+    for (campaigns.items) |campaign| {
+        var project_campaign_count: u8 = 0;
+        for (campaigns.items[0..retained_count]) |retained| {
+            if (std.mem.eql(u8, retained.project_id, campaign.project_id)) {
+                project_campaign_count += 1;
+            }
+        }
+        if (project_campaign_count < Database.campaigns_per_project_max) {
+            campaigns.items[retained_count] = campaign;
+            retained_count += 1;
+        }
+    }
+    campaigns.shrinkRetainingCapacity(retained_count);
 }
 
 const LoadMatrixOptions = struct {

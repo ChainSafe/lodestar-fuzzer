@@ -1,29 +1,33 @@
-# Lodestar Fuzzer
+# Consensus Fuzzer
 
-This repository runs finite AFL++ campaigns against every fuzz target published by
-[Lodestar-Z](https://github.com/ChainSafe/lodestar-z). Lodestar-Z owns target behavior, committed
-seeds, executable construction, and corpus replay. This repository owns the schedule, runner-local
-campaign corpus, result database, and GitHub Pages report.
+This repository runs finite AFL++ campaigns against fuzz targets published by independent projects.
+Each target project owns target behavior, committed seeds, executable construction, and corpus
+replay. This repository owns reusable campaign orchestration, project-specific schedules,
+runner-local campaign corpora, the result database, and the GitHub Pages report.
 
 The workflow structure is inspired by
 [`roc-lang/roc-compiler-fuzz`](https://github.com/roc-lang/roc-compiler-fuzz). The controller is an
-independent Zig and GitHub Actions adaptation for Lodestar-Z's target metadata and a single AFL++
+independent Zig and GitHub Actions adaptation for project-owned target metadata and a single AFL++
 worker per target.
 
 ## Workflow
 
-Scheduled runs start every six hours and use Lodestar-Z `main` for 7,200 seconds. A manual run accepts
-a Lodestar-Z branch, tag, or commit and a per-target duration. The hosted discovery job checks out
-that ref once, runs:
+`.github/workflows/fuzz.yml` is the reusable single-project campaign. Small caller workflows provide
+the project identity, repository, canonical ref, metadata path, and schedule. The current
+`fuzz-lodestar-z.yml` caller starts every six hours and uses Lodestar-Z `main` for 7,200 seconds. Its
+manual entry accepts a Lodestar-Z branch, tag, or commit and a per-target duration.
+
+The hosted discovery job checks out the selected project revision once and runs the shared project
+contract:
 
 ```sh
-cd lodestar-z/test/fuzz
+cd target-project/test/fuzz
 zig build fuzz-metadata
 ```
 
-It validates the compact `zig-out/share/lodestar-z-fuzz/targets.json`, resolves the checkout to an
-exact 40-character commit SHA, and creates the target matrix. Every campaign job checks out that
-exact SHA and runs only:
+It validates the configured compact target metadata file, resolves the checkout to an exact
+40-character commit SHA, and creates the target matrix. Every campaign job checks out that exact SHA
+and runs only:
 
 ```sh
 zig build -Doptimize=ReleaseSafe -Dfuzz-target="$TARGET"
@@ -37,7 +41,8 @@ Campaign jobs upload results but never modify Git.
 The final hosted aggregation job requires exactly one artifact for every discovered target. Each
 artifact contains `result.json` and every crash or hang retained by AFL++. The Zig merger rejects
 missing, duplicate, unexpected, or campaign-mismatched results, retains the latest three complete
-campaigns in `data.json`, generates `www/index.html`, and performs at most one commit and push.
+campaigns per project in `data.json`, generates `www/index.html`, and performs at most one commit and
+push.
 Re-running the same GitHub Actions run replaces that campaign. A separate hosted job publishes the
 generated site through GitHub Pages.
 
@@ -74,12 +79,13 @@ $STATE_ROOT/
     └── staging/<target>/v<corpus-version>/<generation>/
 ```
 
-The project, target, and target-published corpus version form the persistent corpus identity. A
-campaign for the canonical `main` ref may update `current`. Other refs may use `current` as input but
-cannot publish over it. The job overlays current inputs with `corpus/<target>-cmin` under SHA-256
-content names, so equal inputs deduplicate and unrelated inputs cannot overwrite each other by
-basename. It then runs AFL++ and minimizes the new `default/queue` with `afl-cmin`. A cmin failure
-stops publication and propagates its original error, leaving the previous `current` corpus unchanged.
+The project, target, and target-published corpus version form the persistent corpus identity. Only a
+controller `main` campaign for that project's canonical ref may update `current`. Other runs may use
+`current` as input but cannot publish over it. The job overlays current inputs with
+`corpus/<target>-cmin` under SHA-256 content names, so equal inputs deduplicate and unrelated inputs
+cannot overwrite each other by basename. It then runs AFL++ and minimizes the new `default/queue`
+with `afl-cmin`. A cmin failure stops publication and propagates its original error, leaving the
+previous `current` corpus unchanged.
 Before publication, every candidate must be a nonempty flat directory of regular inputs within the
 target limit and must pass `zig-out/bin/repro-<target>` as a directory replay.
 
@@ -99,6 +105,27 @@ Before deploying this workflow, copy or move each existing `$STATE_ROOT/corpus/<
 `$STATE_ROOT/projects/lodestar-z/corpus/<target>/v1`. Both layouts may coexist only when the new
 target has a `current` symlink, which permits branch validation while the default workflow still uses
 the old layout. Remove the old layout after this workflow reaches `main`.
+
+## Adding a project
+
+A project must expose the same bounded contract under `test/fuzz`:
+
+- `zig build fuzz-metadata` writes a validated target matrix.
+- `zig build -Dfuzz-target=<name>` builds one `fuzz-<name>` binary.
+- `zig build replay-corpus -Dfuzz-target=<name>` replays committed inputs.
+- `corpus/<name>-cmin` contains the committed bootstrap corpus.
+- `zig-out/bin/repro-<name>` replays a file or flat corpus directory.
+
+Add one small caller workflow that invokes `.github/workflows/fuzz.yml` with a unique `project_id`,
+the repository, canonical ref, metadata path, and whether the project needs legacy corpus migration.
+Campaigns remain globally serialized on the shared runner, while corpus, failures, artifacts, and
+database rows stay isolated by project identity.
+
+The database currently accepts two project identities, matching the planned Lodestar-Z and Zapi
+campaigns. Extending that bound requires an explicit configuration change.
+
+Lodestar-Z satisfies this contract through its pending fuzz PR. Zapi does not expose it yet, so its
+caller should be added only after Zapi publishes concrete targets and reproducers.
 
 ## Zig tools
 

@@ -1,23 +1,32 @@
-name: Fuzz Lodestar-Z
+name: Fuzz campaign
 
 on:
-  schedule:
-    - cron: "22 0/6 * * *"
-  workflow_dispatch:
+  workflow_call:
     inputs:
-      duration_seconds:
-        description: Seconds to run each target
-        type: number
-        default: 7200
-      lodestar_z_ref:
-        description: Lodestar-Z branch, tag, or commit
+      canonical_ref:
+        required: true
         type: string
-        default: main
-
-run-name: Fuzz Lodestar-Z ${{ inputs.lodestar_z_ref || 'main' }}
+      duration_seconds:
+        required: true
+        type: number
+      legacy_corpus_migration:
+        required: true
+        type: boolean
+      metadata_path:
+        required: true
+        type: string
+      project_id:
+        required: true
+        type: string
+      repository:
+        required: true
+        type: string
+      target_ref:
+        required: true
+        type: string
 
 concurrency:
-  group: ${{ github.workflow }}
+  group: lodestar-fuzzer-campaign
   cancel-in-progress: false
 
 permissions:
@@ -26,12 +35,14 @@ permissions:
 
 env:
   AFL_BIN_DIR: ${{ vars.AFL_BIN_DIR || '/opt/afl++/5.02c/bin' }}
-  CANONICAL_REF: main
-  DURATION_SECONDS: ${{ inputs.duration_seconds || '7200' }}
-  LODESTAR_Z_REF: ${{ inputs.lodestar_z_ref || 'main' }}
-  PROJECT_ID: lodestar-z
-  PROJECT_REPOSITORY: ChainSafe/lodestar-z
+  CANONICAL_REF: ${{ inputs.canonical_ref }}
+  DURATION_SECONDS: ${{ inputs.duration_seconds }}
+  LEGACY_CORPUS_MIGRATION: ${{ inputs.legacy_corpus_migration }}
+  PROJECT_ID: ${{ inputs.project_id }}
+  PROJECT_REPOSITORY: ${{ inputs.repository }}
   STATE_ROOT: ${{ vars.STATE_ROOT || '/var/lib/lodestar-fuzzer' }}
+  TARGET_METADATA_PATH: ${{ inputs.metadata_path }}
+  TARGET_REF: ${{ inputs.target_ref }}
 
 jobs:
   discover:
@@ -41,12 +52,12 @@ jobs:
       commit_timestamp: ${{ steps.metadata.outputs.commit_timestamp }}
       matrix: ${{ steps.metadata.outputs.matrix }}
     steps:
-      - name: Checkout Lodestar-Z
+      - name: Checkout target project
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          path: lodestar-z
-          repository: ChainSafe/lodestar-z
-          ref: ${{ env.LODESTAR_Z_REF }}
+          path: target-project
+          repository: ${{ env.PROJECT_REPOSITORY }}
+          ref: ${{ env.TARGET_REF }}
 
       - name: Install Zig
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
@@ -59,12 +70,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          commit_sha="$(git -C lodestar-z rev-parse --verify HEAD^{commit})"
+          commit_sha="$(git -C target-project rev-parse --verify HEAD^{commit})"
           [[ "$commit_sha" =~ ^[0-9a-f]{40}$ ]]
-          commit_timestamp="$(git -C lodestar-z show -s --format=%ct HEAD)"
+          commit_timestamp="$(git -C target-project show -s --format=%ct HEAD)"
           [[ "$commit_timestamp" =~ ^[1-9][0-9]*$ ]]
 
-          cd lodestar-z/test/fuzz
+          cd target-project/test/fuzz
           zig build fuzz-metadata
           matrix="$(jq -c -e '
             select(type == "object") |
@@ -89,8 +100,8 @@ jobs:
               (.corpus_version <= 4294967295) and
               (.corpus_version == (.corpus_version | floor))
             )
-          ' zig-out/share/lodestar-z-fuzz/targets.json >/dev/null &&
-            jq -c '.' zig-out/share/lodestar-z-fuzz/targets.json)"
+          ' "$TARGET_METADATA_PATH" >/dev/null &&
+            jq -c '.' "$TARGET_METADATA_PATH")"
 
           echo "commit_sha=$commit_sha" >> "$GITHUB_OUTPUT"
           echo "commit_timestamp=$commit_timestamp" >> "$GITHUB_OUTPUT"
@@ -109,7 +120,7 @@ jobs:
       COMMIT_TIMESTAMP: ${{ needs.discover.outputs.commit_timestamp }}
       CORPUS_VERSION: ${{ matrix.corpus_version }}
       MAX_INPUT_LEN: ${{ matrix.max_input_len }}
-      PUBLISH_CORPUS: ${{ (inputs.lodestar_z_ref || 'main') == 'main' }}
+      PUBLISH_CORPUS: ${{ github.ref == 'refs/heads/main' && inputs.target_ref == inputs.canonical_ref }}
       TARGET: ${{ matrix.target }}
     steps:
       - name: Checkout controller
@@ -117,11 +128,11 @@ jobs:
         with:
           path: lodestar-fuzzer
 
-      - name: Checkout Lodestar-Z
+      - name: Checkout target project
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          path: lodestar-z
-          repository: ChainSafe/lodestar-z
+          path: target-project
+          repository: ${{ env.PROJECT_REPOSITORY }}
           ref: ${{ env.COMMIT_SHA }}
 
       - name: Verify inputs and toolchain
@@ -131,16 +142,19 @@ jobs:
           [[ "$TARGET" =~ ^[a-z0-9_]+$ ]]
           [[ "$PROJECT_ID" =~ ^[a-z0-9-]+$ ]]
           [[ "$PROJECT_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]
+          [[ "$TARGET_METADATA_PATH" =~ ^[A-Za-z0-9._/-]+$ ]]
+          [[ "$TARGET_METADATA_PATH" != /* ]]
           [[ "$CORPUS_VERSION" =~ ^[1-9][0-9]*$ ]]
           [[ "$MAX_INPUT_LEN" =~ ^[1-9][0-9]*$ ]]
           [[ "$DURATION_SECONDS" =~ ^[1-9][0-9]*$ ]]
+          [[ "$LEGACY_CORPUS_MIGRATION" == "true" || "$LEGACY_CORPUS_MIGRATION" == "false" ]]
           [[ "$PUBLISH_CORPUS" == "true" || "$PUBLISH_CORPUS" == "false" ]]
-          if [[ "$PUBLISH_CORPUS" == "true" ]]; then
-            [[ "$LODESTAR_Z_REF" == "$CANONICAL_REF" ]]
+          if [[ "$GITHUB_REF" == "refs/heads/main" && "$TARGET_REF" == "$CANONICAL_REF" ]]; then
+            [[ "$PUBLISH_CORPUS" == "true" ]]
           else
-            [[ "$LODESTAR_Z_REF" != "$CANONICAL_REF" ]]
+            [[ "$PUBLISH_CORPUS" == "false" ]]
           fi
-          [[ "$(git -C lodestar-z rev-parse --verify HEAD^{commit})" == "$COMMIT_SHA" ]]
+          [[ "$(git -C target-project rev-parse --verify HEAD^{commit})" == "$COMMIT_SHA" ]]
           [[ "$(zig version)" == "0.16.0" ]]
           [[ "$(llvm-config-18 --version)" == 18.* ]]
           [[ -x "$AFL_BIN_DIR/afl-fuzz" ]]
@@ -155,7 +169,7 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$AFL_BIN_DIR:$PATH"
-          cd lodestar-z/test/fuzz
+          cd target-project/test/fuzz
           zig build -Doptimize=ReleaseSafe -Dfuzz-target="$TARGET"
           zig build replay-corpus -Doptimize=ReleaseSafe -Dfuzz-target="$TARGET"
 
@@ -172,9 +186,11 @@ jobs:
           stage="$staging_target/$generation"
           input="$stage/input"
           output="$stage/output"
-          legacy_target_root="$STATE_ROOT/corpus/$TARGET"
-          if [[ -e "$legacy_target_root" || -L "$legacy_target_root" ]]; then
-            [[ -L "$target_root/current" ]]
+          if [[ "$LEGACY_CORPUS_MIGRATION" == "true" ]]; then
+            legacy_target_root="$STATE_ROOT/corpus/$TARGET"
+            if [[ -e "$legacy_target_root" || -L "$legacy_target_root" ]]; then
+              [[ -L "$target_root/current" ]]
+            fi
           fi
           mkdir -p "$versions_root" "$failures_root" "$staging_target"
 
@@ -261,7 +277,7 @@ jobs:
           if [[ -n "$current_name" ]]; then
             overlay_corpus "$current_real" runner
           fi
-          overlay_corpus "lodestar-z/test/fuzz/corpus/$TARGET-cmin" committed
+          overlay_corpus "target-project/test/fuzz/corpus/$TARGET-cmin" committed
 
           [[ -n "$(find "$input" -mindepth 1 -maxdepth 1 -type f -print -quit)" ]]
           [[ -z "$(find "$input" -mindepth 1 -maxdepth 1 ! -type f -print -quit)" ]]
@@ -291,7 +307,7 @@ jobs:
             -t 1000+ \
             -m 1024 \
             -G "$MAX_INPUT_LEN" \
-            -- "lodestar-z/test/fuzz/zig-out/bin/fuzz-$TARGET"
+            -- "target-project/test/fuzz/zig-out/bin/fuzz-$TARGET"
 
       - name: Minimize and publish corpus
         if: ${{ env.PUBLISH_CORPUS == 'true' }}
@@ -301,8 +317,8 @@ jobs:
           export PATH="$AFL_BIN_DIR:$PATH"
           queue="$CAMPAIGN_OUTPUT/default/queue"
           candidate="$CAMPAIGN_STAGE/candidate"
-          binary="lodestar-z/test/fuzz/zig-out/bin/fuzz-$TARGET"
-          repro="lodestar-z/test/fuzz/zig-out/bin/repro-$TARGET"
+          binary="target-project/test/fuzz/zig-out/bin/fuzz-$TARGET"
+          repro="target-project/test/fuzz/zig-out/bin/repro-$TARGET"
           [[ -d "$queue" ]]
 
           "$AFL_BIN_DIR/afl-cmin" \
@@ -358,7 +374,7 @@ jobs:
             "$PROJECT_ID" \
             "$PROJECT_REPOSITORY" \
             "$GITHUB_RUN_ID" \
-            "$LODESTAR_Z_REF" \
+            "$TARGET_REF" \
             "$COMMIT_SHA" \
             "$COMMIT_TIMESTAMP" \
             "$TARGET" \
@@ -403,11 +419,11 @@ jobs:
           path: controller-data
           ref: main
 
-      - name: Checkout tested Lodestar-Z revision
+      - name: Checkout tested target revision
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          path: lodestar-z
-          repository: ChainSafe/lodestar-z
+          path: target-project
+          repository: ${{ env.PROJECT_REPOSITORY }}
           ref: ${{ needs.discover.outputs.commit_sha }}
 
       - name: Install Zig
@@ -429,8 +445,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$(git -C lodestar-z rev-parse --verify HEAD^{commit})" == "${{ needs.discover.outputs.commit_sha }}" ]]
-          cd lodestar-z/test/fuzz
+          [[ "$(git -C target-project rev-parse --verify HEAD^{commit})" == "${{ needs.discover.outputs.commit_sha }}" ]]
+          cd target-project/test/fuzz
           zig build fuzz-metadata
           cd ../../../
 
@@ -438,10 +454,10 @@ jobs:
             "$PROJECT_ID" \
             "$PROJECT_REPOSITORY" \
             "$GITHUB_RUN_ID" \
-            "$LODESTAR_Z_REF" \
+            "$TARGET_REF" \
             "${{ needs.discover.outputs.commit_sha }}" \
             "${{ needs.discover.outputs.commit_timestamp }}" \
-            "$GITHUB_WORKSPACE/lodestar-z/test/fuzz/zig-out/share/lodestar-z-fuzz/targets.json" \
+            "$GITHUB_WORKSPACE/target-project/test/fuzz/$TARGET_METADATA_PATH" \
             "$RUNNER_TEMP/lodestar-fuzzer-results" \
             "$GITHUB_WORKSPACE/controller-data/data.json"
           cd controller-data
