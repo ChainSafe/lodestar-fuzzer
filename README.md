@@ -231,6 +231,7 @@ A project must expose the same bounded contract under `test/fuzz`:
 - `zig build fuzz-metadata` writes a validated target matrix.
 - `zig build -Dfuzz-target=<name>` builds one `fuzz-<name>` binary.
 - `zig build replay-corpus -Dfuzz-target=<name>` replays committed inputs.
+- `zig build run-repro-<name> -- --base64 <encoded>` replays one encoded input.
 - `corpus/<name>-cmin` contains the committed bootstrap corpus.
 - `zig-out/bin/repro-<name>` replays a file or flat corpus directory.
 
@@ -251,7 +252,8 @@ Its table headers expose these definitions as hover and keyboard-focus tooltips:
 | Column | Meaning |
 | --- | --- |
 | Target | The project-published target name. `corpus vN` is the target's corpus-format namespace, not the campaign number. |
-| Failures | AFL++ unique crashes and hangs saved during this target run. The page includes at most one representative base64 sample of each kind; the run artifact and durable runner storage retain every raw failure. |
+| Failures | AFL++ unique crashes and hangs saved during this target run. |
+| Command | One-line `run-repro-<target>` command embedding at most one representative crash and hang. Run it from the tested project repository root. The run artifact and durable runner storage retain every raw failure. Rows without failures display `Nil failures`. |
 | Queue | `new` is AFL++ `corpus_found`, the queue entries discovered locally during this run. `at exit` is `corpus_count`, the total queue size when the worker finished. |
 | Coverage signal | `edges_found / total_edges` and the rounded one-decimal map occupancy. It reports reached AFL++ instrumentation-map slots, not source-line or function coverage, and is not comparable across different binaries. |
 | Work | Total target executions, average executions per second, and target runtime. Campaign target time is summed across parallel jobs, so it is not wall-clock duration. |

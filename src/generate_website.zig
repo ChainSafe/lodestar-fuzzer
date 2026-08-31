@@ -245,9 +245,15 @@ fn writeCampaign(writer: *std.Io.Writer, campaign: Database.Campaign) !void {
         \\              namespace, not a campaign number.">Target</button></th>
         \\          <th><button class="metric" type="button"
         \\            aria-label="Failures. Unique AFL++ crashes and hangs saved in this run."
-        \\            data-tooltip="Unique crashes and hangs AFL++ saved in this run. Expand a
-        \\              base64 sample here; download the run artifact for every raw input."
+        \\            data-tooltip="Unique crashes and hangs AFL++ saved in this run. Commands
+        \\              embed representative inputs; artifacts retain every raw input."
         \\            >Failures</button></th>
+        \\          <th><button class="metric" type="button"
+        \\            aria-label="Command. One-line representative crash and hang reproducers;
+        \\              run from the tested project repository root."
+        \\            data-tooltip="One-line command for each representative crash or hang.
+        \\              Run it from the tested project repository root."
+        \\            >Command</button></th>
         \\          <th><button class="metric" type="button"
         \\            aria-label="Queue. New entries and total entries when the worker stopped."
         \\            data-tooltip="new is AFL++ corpus_found for this run. at exit is corpus_count,
@@ -288,11 +294,11 @@ fn writeResult(writer: *std.Io.Writer, result: Database.TargetResult) !void {
             result.unique_crashes,
             result.unique_hangs,
         });
-        try writeFailure(writer, "crash", result.encoded_crash);
-        try writeFailure(writer, "hang", result.encoded_hang);
     } else {
         try writer.writeAll("None");
     }
+    try writer.writeAll("</td><td>");
+    try writeCommands(writer, result);
     try writer.print(
         "</td><td>{d} new<br><small>{d} at exit</small></td>" ++
             "<td>{d}/{d}<br><small>{d}.{d}% map occupancy</small></td>" ++
@@ -312,13 +318,43 @@ fn writeResult(writer: *std.Io.Writer, result: Database.TargetResult) !void {
     try writer.writeAll("</tr>\n");
 }
 
-fn writeFailure(writer: *std.Io.Writer, kind: []const u8, encoded: ?[]const u8) !void {
-    const content = encoded orelse return;
-    try writer.writeAll("<details><summary>");
-    try writer.writeAll(kind);
-    try writer.writeAll(" base64</summary><code>");
-    try writeEscaped(writer, content);
-    try writer.writeAll("</code></details>");
+fn writeCommands(writer: *std.Io.Writer, result: Database.TargetResult) !void {
+    var wrote_command = false;
+    if (result.encoded_crash) |encoded| {
+        try writeCommand(writer, .{
+            .target = result.target,
+            .kind = "crash",
+            .encoded = encoded,
+        });
+        wrote_command = true;
+    }
+    if (result.encoded_hang) |encoded| {
+        if (wrote_command) try writer.writeAll("<br>");
+        try writeCommand(writer, .{
+            .target = result.target,
+            .kind = "hang",
+            .encoded = encoded,
+        });
+        wrote_command = true;
+    }
+    if (!wrote_command) try writer.writeAll("<i>Nil failures</i>");
+}
+
+fn writeCommand(
+    writer: *std.Io.Writer,
+    options: struct {
+        target: []const u8,
+        kind: []const u8,
+        encoded: []const u8,
+    },
+) !void {
+    try writer.writeAll("<small>");
+    try writeEscaped(writer, options.kind);
+    try writer.writeAll("</small><br><code>cd test/fuzz &amp;&amp; zig build run-repro-");
+    try writeEscaped(writer, options.target);
+    try writer.writeAll(" -Doptimize=ReleaseSafe -- --base64 &#39;");
+    try writeEscaped(writer, options.encoded);
+    try writer.writeAll("&#39;</code>");
 }
 
 fn writeEscaped(writer: *std.Io.Writer, value: []const u8) !void {
