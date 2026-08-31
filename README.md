@@ -81,11 +81,12 @@ cron time, so the schedule is a periodic trigger, not a real-time guarantee.
 
 For each canonical target, `afl-cmin` runs immediately after that target's finite `afl-fuzz` process
 exits successfully; it is not a separately scheduled job. After replay succeeds, the workflow
-atomically publishes the minimized queue as `current`. The next campaign overlays that `current`
-corpus with the target's committed inputs before fuzzing. A fuzzing, minimization, or replay failure
-leaves the previous `current` corpus unchanged. A failed or incomplete campaign retains any uploaded
-diagnostic artifacts. Successful targets in the same matrix may already have updated their corpora,
-but an incomplete matrix cannot update the database or Pages.
+atomically publishes the minimized queue as `current` in runner-local persistent storage. It does not
+commit corpus files to Git or open a pull request. The next campaign overlays that runner-local
+`current` corpus with the target's already committed bootstrap inputs before fuzzing. A fuzzing,
+minimization, or replay failure leaves the previous `current` corpus unchanged. A failed or incomplete
+campaign retains any uploaded diagnostic artifacts. Successful targets in the same matrix may already
+have updated their corpora, but an incomplete matrix cannot update the database or Pages.
 
 ## Architecture
 
