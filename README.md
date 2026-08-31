@@ -70,7 +70,7 @@ process captures new code, targets, and seeds while keeping CPU use and result b
 GitHub Actions provides the required control plane in the same place as the source repositories:
 
 - scheduled canonical campaigns run the latest controller `main` against the target's canonical ref;
-- manual runs can test a branch, tag, or commit without changing canonical history;
+- manual runs can test a branch, tag, or commit without changing the canonical corpus;
 - the matrix gives each target an independent job, timeout, log, and artifact;
 - concurrency serializes campaigns that share the persistent runner state; and
 - hosted aggregation can update `data.json` and Pages without giving the fuzz runner Git write access.
@@ -100,13 +100,14 @@ metadata, require one result per discovered target, and decide whether publicati
 self-hosted matrix is the data plane. It compiles the target project, replays committed seeds, reads
 the current persistent corpus, runs AFL++, and preserves failures.
 
-Two publication gates protect canonical state:
+Two publication gates protect the canonical corpus:
 
 1. The controller workflow must run from `lodestar-fuzzer` `main`.
 2. The selected target ref must equal that project's configured canonical ref.
 
-Every other combination, including a controller feature branch targeting a project `main`, may read
-the canonical corpus but cannot update the corpus, `data.json`, or Pages.
+Campaigns that fail either gate may read the canonical corpus but cannot update it. A controller
+`main` campaign still records and reports a complete non-canonical target campaign in `data.json`
+and Pages. Controller feature branches publish neither corpus nor reports.
 
 ## How a campaign runs
 
@@ -148,9 +149,9 @@ Aggregation runs only after discovery and every target job complete successfully
 still preserve and upload failure evidence after corpus post-processing fails, but an incomplete
 matrix never updates `data.json` or Pages.
 
-Only a controller `main` campaign targeting the project's canonical ref records `data.json` or
-deploys Pages. Non-canonical target refs still aggregate and validate their artifacts, but do not
-publish them as canonical history.
+Only controller `main` campaigns record `data.json` and deploy Pages. Within those campaigns, only
+the project's canonical target ref may update the persistent corpus. Non-canonical target refs
+publish their completed reports without replacing canonical corpus state.
 
 In order, a complete campaign:
 
@@ -161,8 +162,8 @@ In order, a complete campaign:
 5. Runs one finite AFL++ worker and captures its queue, statistics, crashes, and hangs.
 6. For canonical campaigns, minimizes and replays the candidate corpus before atomically publishing
    it. Non-canonical campaigns skip this step.
-7. Requires and validates every target result, updates the bounded database, and deploys Pages only
-   when both publication gates are satisfied.
+7. Requires and validates every target result, then updates the bounded database and deploys Pages
+   for controller `main` campaigns.
 
 ## Runner contract
 
