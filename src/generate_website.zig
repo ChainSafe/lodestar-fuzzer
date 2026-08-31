@@ -143,9 +143,9 @@ fn writeHeader(writer: *std.Io.Writer) !void {
         \\  </a></p>
         \\  <p class="foot">
         \\    Hover over or focus a ? column heading to see its definition.
-        \\    <a href="https://aflplus.plus/docs/afl-fuzz_approach/">AFL map edges</a>
-        \\    are coverage-map slots reached in each instrumented target binary, not source line
-        \\    or function coverage. Queue entries are inputs that produced interesting coverage.
+        \\    <a href="https://aflplus.plus/docs/afl-fuzz_approach/">Coverage signal</a>
+        \\    reports reached AFL++ map slots and binary-local map occupancy, not source line or
+        \\    function coverage. Queue entries are inputs that produced interesting coverage.
         \\  </p>
         \\
     );
@@ -253,10 +253,11 @@ fn writeCampaign(writer: *std.Io.Writer, campaign: Database.Campaign) !void {
         \\            data-tooltip="new is AFL++ corpus_found for this run. at exit is corpus_count,
         \\              the total queue size when the worker stopped.">Queue</button></th>
         \\          <th><button class="metric" type="button"
-        \\            aria-label="AFL map edges. Coverage-map slots reached by the exit queue."
-        \\            data-tooltip="AFL++ edges_found: coverage-map slots reached by the exit queue.
+        \\            aria-label="Coverage signal. Reached AFL++ map slots and binary-local
+        \\              occupancy; not source coverage and not comparable across binaries."
+        \\            data-tooltip="AFL++ edges_found / total_edges and the resulting map occupancy.
         \\              This is not source-line or function coverage and is not comparable across
-        \\              different binaries.">AFL map edges</button></th>
+        \\              different binaries.">Coverage signal</button></th>
         \\          <th><button class="metric" type="button"
         \\            aria-label="Work. Executions, average throughput, and target runtime."
         \\            data-tooltip="Total executions, average executions per second, and target
@@ -272,6 +273,9 @@ fn writeCampaign(writer: *std.Io.Writer, campaign: Database.Campaign) !void {
 
 fn writeResult(writer: *std.Io.Writer, result: Database.TargetResult) !void {
     const failed = result.unique_crashes > 0 or result.unique_hangs > 0;
+    const edges_scaled = @as(u128, result.edges_found) * 1000;
+    const total_edges = @as(u128, result.total_edges);
+    const coverage_percent_tenths = (edges_scaled + total_edges / 2) / total_edges;
     try writer.writeAll("        <tr><td><code>");
     try writeEscaped(writer, result.target);
     try writer.print("</code><br><small>corpus v{d}</small></td><td class=\"", .{
@@ -290,12 +294,16 @@ fn writeResult(writer: *std.Io.Writer, result: Database.TargetResult) !void {
         try writer.writeAll("None");
     }
     try writer.print(
-        "</td><td>{d} new<br><small>{d} at exit</small></td><td>{d}</td>" ++
+        "</td><td>{d} new<br><small>{d} at exit</small></td>" ++
+            "<td>{d}/{d}<br><small>{d}.{d}% map occupancy</small></td>" ++
             "<td>{d} executions<br><small>{d}/s · {d}s</small></td>",
         .{
             result.corpus_found,
             result.corpus_count,
             result.edges_found,
+            result.total_edges,
+            coverage_percent_tenths / 10,
+            coverage_percent_tenths % 10,
             result.total_execs,
             result.total_execs / result.run_time_seconds,
             result.run_time_seconds,

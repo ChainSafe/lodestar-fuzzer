@@ -255,7 +255,7 @@ Its table headers expose these definitions as hover and keyboard-focus tooltips:
 | Target | The project-published target name. `corpus vN` is the target's corpus-format namespace, not the campaign number. |
 | Failures | AFL++ unique crashes and hangs saved during this target run. The page includes at most one representative base64 sample of each kind; the run artifact and durable runner storage retain every raw failure. |
 | Queue | `new` is AFL++ `corpus_found`, the queue entries discovered locally during this run. `at exit` is `corpus_count`, the total queue size when the worker finished. |
-| AFL map edges | `edges_found`, the instrumentation-map slots reached by the exit queue. It is an absolute target-local metric, not source-line or function coverage and not directly comparable between different binaries. |
+| Coverage signal | `edges_found / total_edges`, the reached AFL++ instrumentation-map slots and binary-local map occupancy. It is not source-line or function coverage and is not comparable across different binaries. |
 | Work | Total target executions, average executions per second, and target runtime. Campaign target time is summed across parallel jobs, so it is not wall-clock duration. |
 
 The campaign heading links to the GitHub Actions run and exact tested commit. The summary totals the
@@ -277,7 +277,8 @@ zig build generate-website
 
 The versioned result database identifies each campaign by project, repository, and GitHub Actions run.
 Each target records its corpus version, run time, execution count, exit queue size, locally discovered
-queue entries, AFL map edges, crash and hang counts, and at most one raw sample of each failure kind.
+queue entries, the AFL coverage signal, crash and hang counts, and at most one raw sample of each
+failure kind.
 Each `result.json` is limited to 4 MiB. The database is limited to 32 MiB and updates atomically, so
 an oversized result fails without replacing the previous database.
 
@@ -286,5 +287,5 @@ campaign-aware update replaces those rows because their campaign membership cann
 reliably.
 
 [AFL map edges](https://aflplus.plus/docs/afl-fuzz_approach/) are instrumentation slots, not source
-line or function coverage. The Pages report emphasizes newly discovered queue entries, corpus size,
-execution throughput, duration, failures, and the absolute map-edge count for each target.
+line or function coverage. The Pages report shows reached slots, binary-local map occupancy, newly
+discovered queue entries, corpus size, execution throughput, duration, and failures.
