@@ -255,7 +255,7 @@ Its table headers expose these definitions as hover and keyboard-focus tooltips:
 | Target | The project-published target name. `corpus vN` is the target's corpus-format namespace, not the campaign number. |
 | Failures | AFL++ unique crashes and hangs saved during this target run. The page includes at most one representative base64 sample of each kind; the run artifact and durable runner storage retain every raw failure. |
 | Queue | `new` is AFL++ `corpus_found`, the queue entries discovered locally during this run. `at exit` is `corpus_count`, the total queue size when the worker finished. |
-| Coverage signal | `edges_found / total_edges`, the reached AFL++ instrumentation-map slots and binary-local map occupancy. It is not source-line or function coverage and is not comparable across different binaries. |
+| Coverage signal | `edges_found / total_edges` and the rounded one-decimal map occupancy. It reports reached AFL++ instrumentation-map slots, not source-line or function coverage, and is not comparable across different binaries. |
 | Work | Total target executions, average executions per second, and target runtime. Campaign target time is summed across parallel jobs, so it is not wall-clock duration. |
 
 The campaign heading links to the GitHub Actions run and exact tested commit. The summary totals the
@@ -286,6 +286,7 @@ The merger accepts the original flat result array only as a one-time legacy inpu
 campaign-aware update replaces those rows because their campaign membership cannot be recovered
 reliably.
 
-[AFL map edges](https://aflplus.plus/docs/afl-fuzz_approach/) are instrumentation slots, not source
-line or function coverage. The Pages report shows reached slots, binary-local map occupancy, newly
-discovered queue entries, corpus size, execution throughput, duration, and failures.
+The [Coverage signal](https://aflplus.plus/docs/afl-fuzz_approach/) uses AFL++ instrumentation-map
+slots, not source-line or function coverage. Pages renders it as
+`edges_found / total_edges (x.x% map occupancy)` alongside newly discovered queue entries, corpus
+size, execution throughput, duration, and failures.
