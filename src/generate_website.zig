@@ -64,7 +64,7 @@ fn writeHeader(writer: *std.Io.Writer) !void {
         \\<head>
         \\  <meta charset="utf-8">
         \\  <meta name="viewport" content="width=device-width, initial-scale=1">
-        \\  <title>Consensus fuzz results</title>
+        \\  <title>Lodestar fuzz results</title>
         \\  <style>
         \\    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
         \\    body { margin: 0; }
@@ -137,7 +137,7 @@ fn writeHeader(writer: *std.Io.Writer) !void {
         \\</head>
         \\<body>
         \\<main>
-        \\  <h1>Consensus fuzz results</h1>
+        \\  <h1>Lodestar fuzz results</h1>
         \\  <p><a href="https://github.com/ChainSafe/lodestar-fuzzer/blob/main/data.json">
         \\    Raw data
         \\  </a></p>

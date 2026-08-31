@@ -1,4 +1,4 @@
-# Consensus Fuzzer
+# Lodestar Fuzzer
 
 This repository runs finite AFL++ campaigns against fuzz targets published by independent projects.
 Each target project owns target behavior, committed seeds, executable construction, and corpus
