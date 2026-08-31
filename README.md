@@ -239,11 +239,9 @@ the repository, canonical ref, metadata path, and whether the project needs lega
 Campaigns remain globally serialized on the shared runner, while corpus, failures, artifacts, and
 database rows stay isolated by project identity.
 
-The database currently accepts two project identities, matching the planned Lodestar-Z and Zapi
-campaigns. Extending that bound requires an explicit configuration change.
-
-Lodestar-Z satisfies this contract through its pending fuzz PR. Zapi does not expose it yet, so its
-caller should be added only after Zapi publishes concrete targets and reproducers.
+Lodestar-Z implements the current project contract under `test/fuzz`. Other projects should use its
+target metadata, selected fuzz builds, committed corpus, bounded replay, and target-specific
+reproducer layout as the reference when integrating with this controller.
 
 ## Pages metrics
 
