@@ -69,7 +69,7 @@ process captures new code, targets, and seeds while keeping CPU use and result b
 
 GitHub Actions provides the required control plane in the same place as the source repositories:
 
-- scheduled canonical campaigns run the latest controller `main` against the target's canonical ref;
+- scheduled campaigns run the latest controller `main` against the caller's configured target ref;
 - manual runs can test a branch, tag, or commit without changing the canonical corpus;
 - the matrix gives each target an independent job, timeout, log, and artifact;
 - concurrency serializes campaigns that share the persistent runner state; and
@@ -113,8 +113,14 @@ and Pages. Controller feature branches publish neither corpus nor reports.
 
 `.github/workflows/fuzz.yml` is the reusable single-project campaign. Small caller workflows provide
 the project identity, repository, canonical ref, metadata path, and schedule. The current
-`fuzz-lodestar-z.yml` caller starts every six hours and uses Lodestar-Z `main` for 7,200 seconds. Its
-manual entry accepts a Lodestar-Z branch, tag, or commit and a per-target duration.
+`fuzz-lodestar-z.yml` caller starts every six hours and temporarily uses Lodestar-Z
+`GrapeBaBa/fuzz-2` for 7,200 seconds per target to debug PR #578 and view results in Pages. Its manual
+entry defaults to the same branch and accepts a branch, tag, or commit and a per-target duration.
+The canonical ref temporarily uses `GrapeBaBa/fuzz-2` too, so controller `main` campaigns exercise
+corpus minimization, replay, publication, reuse by the next campaign, and Pages reporting. These runs
+update the existing runner corpus under the same project, target, and corpus-version namespace.
+After validation, switch both the default target ref and canonical ref back to `main`; with the same
+corpus version, subsequent runs will reuse that corpus.
 
 The hosted discovery job checks out the selected project revision once and runs the shared project
 contract:
