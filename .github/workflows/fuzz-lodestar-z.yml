@@ -25,7 +25,7 @@ jobs:
       pages: write
     uses: ./.github/workflows/fuzz.yml
     with:
-      canonical_ref: main
+      canonical_ref: GrapeBaBa/fuzz-2
       duration_seconds: ${{ fromJSON(github.event.inputs.duration_seconds || '7200') }}
       legacy_corpus_migration: true
       metadata_path: zig-out/share/lodestar-z-fuzz/targets.json

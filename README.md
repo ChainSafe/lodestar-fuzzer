@@ -116,8 +116,11 @@ the project identity, repository, canonical ref, metadata path, and schedule. Th
 `fuzz-lodestar-z.yml` caller starts every six hours and temporarily uses Lodestar-Z
 `GrapeBaBa/fuzz-2` for 7,200 seconds per target to debug PR #578 and view results in Pages. Its manual
 entry defaults to the same branch and accepts a branch, tag, or commit and a per-target duration.
-The canonical ref remains `main`, so these branch campaigns publish completed reports but skip corpus
-minimization and publication.
+The canonical ref temporarily uses `GrapeBaBa/fuzz-2` too, so controller `main` campaigns exercise
+corpus minimization, replay, publication, reuse by the next campaign, and Pages reporting. These runs
+update the existing runner corpus under the same project, target, and corpus-version namespace.
+After validation, switch both the default target ref and canonical ref back to `main`; with the same
+corpus version, subsequent runs will reuse that corpus.
 
 The hosted discovery job checks out the selected project revision once and runs the shared project
 contract:
