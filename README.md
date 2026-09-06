@@ -75,11 +75,18 @@ GitHub Actions provides the required control plane in the same place as the sour
 - concurrency serializes campaigns that share the persistent runner state; and
 - hosted aggregation can update `data.json` and Pages without giving the fuzz runner Git write access.
 
-The current Lodestar-Z caller requests a two-hour campaign per target every six hours. GitHub
-scheduled workflows may start later than the requested cron time, so the schedule is a periodic
-trigger, not a real-time guarantee. A failed or incomplete campaign retains any uploaded diagnostic
-artifacts. A failed target cannot publish its candidate corpus. Successful targets in the same matrix
-may already have updated their corpora, but an incomplete matrix cannot update the database or Pages.
+The current Lodestar-Z caller uses `22 0/6 * * *` to request a two-hour campaign per target at
+00:22, 06:22, 12:22, and 18:22 UTC. GitHub scheduled workflows may start later than the requested
+cron time, so the schedule is a periodic trigger, not a real-time guarantee.
+
+For each canonical target, `afl-cmin` runs immediately after that target's finite `afl-fuzz` process
+exits successfully; it is not a separately scheduled job. After replay succeeds, the workflow
+atomically publishes the minimized queue as `current` in runner-local persistent storage. It does not
+commit corpus files to Git or open a pull request. The next campaign overlays that runner-local
+`current` corpus with the target's already committed bootstrap inputs before fuzzing. A fuzzing,
+minimization, or replay failure leaves the previous `current` corpus unchanged. A failed or incomplete
+campaign retains any uploaded diagnostic artifacts. Successful targets in the same matrix may already
+have updated their corpora, but an incomplete matrix cannot update the database or Pages.
 
 ## Architecture
 
